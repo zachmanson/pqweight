@@ -16,6 +16,12 @@ pub enum ParseError {
     /// The byte after the segwit marker was not `0x01`, the only flag Bitcoin Core
     /// accepts for a transaction with witness data.
     UnknownSegwitFlag { flag: u8, offset: usize },
+    /// A compact size (count or length) used a wider encoding than its value needs,
+    /// which Bitcoin Core rejects. `offset` is where the compact size begins.
+    NonCanonicalCompactSize {
+        reading: &'static str,
+        offset: usize,
+    },
 }
 
 struct Reader<'a> {
@@ -40,27 +46,48 @@ impl Reader<'_> {
 
     /// Reads a variable-length integer (compact size).
     fn read_compact_size(&mut self, reading: &'static str) -> Result<u64, ParseError> {
+        let field_offset = self.offset;
         let first = self.read_u8(reading)?;
         if first == 0xfd {
             let start = self.offset;
             self.skip(2, reading)?;
             let raw = &self.bytes[start..start + 2];
-            return Ok(u64::from(u16::from_le_bytes([raw[0], raw[1]])));
+            let value = u64::from(u16::from_le_bytes([raw[0], raw[1]]));
+            // Values below 0xFD must use the one-byte form; Core rejects the wider one.
+            if value < 0xfd {
+                return Err(ParseError::NonCanonicalCompactSize {
+                    reading,
+                    offset: field_offset,
+                });
+            }
+            return Ok(value);
         }
         if first == 0xfe {
             let start = self.offset;
             self.skip(4, reading)?;
             let raw = &self.bytes[start..start + 4];
-            return Ok(u64::from(u32::from_le_bytes([
-                raw[0], raw[1], raw[2], raw[3],
-            ])));
+            let value = u64::from(u32::from_le_bytes([raw[0], raw[1], raw[2], raw[3]]));
+            if value < 0x1_0000 {
+                return Err(ParseError::NonCanonicalCompactSize {
+                    reading,
+                    offset: field_offset,
+                });
+            }
+            return Ok(value);
         }
         if first == 0xff {
             let start = self.offset;
             self.skip(8, reading)?;
             let mut raw = [0u8; 8];
             raw.copy_from_slice(&self.bytes[start..start + 8]);
-            return Ok(u64::from_le_bytes(raw));
+            let value = u64::from_le_bytes(raw);
+            if value < 0x1_0000_0000 {
+                return Err(ParseError::NonCanonicalCompactSize {
+                    reading,
+                    offset: field_offset,
+                });
+            }
+            return Ok(value);
         }
         Ok(u64::from(first))
     }
@@ -157,6 +184,10 @@ impl std::fmt::Display for ParseError {
             Self::UnknownSegwitFlag { flag, offset } => write!(
                 f,
                 "unknown segwit flag 0x{flag:02x} at byte {offset}, expected 0x01"
+            ),
+            Self::NonCanonicalCompactSize { reading, offset } => write!(
+                f,
+                "non-canonical compact size while reading {reading} at byte {offset}: a shorter encoding fits the value"
             ),
         }
     }
