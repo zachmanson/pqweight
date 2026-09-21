@@ -1,4 +1,4 @@
-Status: ready-for-agent
+Status: resolved
 
 # Weight computation validated against the Oracle
 
@@ -59,6 +59,7 @@ A library function takes a raw transaction and returns its **Weight**, **virtual
 - The first Fixture set covers: legacy P2PKH, P2WPKH, P2SH-P2WPKH, P2WSH multisig, P2TR key-path and P2TR script-path, including at least one with an annex if a real one can be found, and at least one large transaction whose counts need a multi-byte compact size.
 - `rust-bitcoin` is added as a dev-dependency only, and is used only in the Fixture test as the second independent check. It never appears in the library's public API or normal dependencies.
 - No consensus validation is performed. A transaction that parses and measures is reported, even if it would be invalid under consensus rules.
+- Where Bitcoin Core rejects a serialization outright, so do we. Two such rules are decided: compact sizes must use the shortest encoding that fits their value (a non-canonical one is an error, `NonCanonicalCompactSize`), and the segwit marker must be followed by the flag `0x01`. Marker plus flag `00 00`, which Core parses as an empty transaction, is rejected as an unknown flag. An empty transaction is not something we measure.
 
 ## Testing Decisions
 
@@ -84,3 +85,12 @@ A library function takes a raw transaction and returns its **Weight**, **virtual
 - Because the recording script needs a local Bitcoin Core node, someone has to run it once by hand to produce the first Fixtures. Fixtures must be committed, since CI cannot regenerate them.
 - If the three sources disagree on a Fixture, ADR-0001 says resolving the disagreement is the point of the project, so do not paper over it by adjusting expected values.
 - Use the CONTEXT.md terms (Weight, vsize, Witness discount, Oracle, Fixture) in code, comments and docs. Avoid "size" and "byte size" for weight.
+
+## Comments
+
+**Built and merged (PR #1).** Everything in the user stories is implemented and covered by tests. Two deviations from the plan above:
+
+- The first Fixture set was recorded on regtest, not from mainnet. It covers P2PKH, P2WPKH, P2SH-P2WPKH, P2WSH 2-of-3 multisig, P2TR key-path and P2TR script-path, plus a 260-output transaction for the multi-byte output count. The annex Fixture (`p2tr-keypath-annex`) is a real key-path spend with an annex appended after signing, so only its weight is meaningful. Replacing the annex, script-path and many-outputs Fixtures with real mainnet transactions would be stronger evidence.
+- The Fixture test compares three sources (ours, rust-bitcoin, the Oracle), as specified. The CLI holds no logic beyond argument handling, hex decoding and printing.
+
+**Decided after the merge:** reject non-canonical compact sizes, and keep rejecting the empty transaction (marker plus flag `00 00`). Both are now covered by tests at the public weight function.

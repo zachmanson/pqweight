@@ -203,3 +203,49 @@ fn legacy_transaction_weight_is_four_times_its_size() {
     assert_eq!(result.weight, 240);
     assert_eq!(result.vsize, 60);
 }
+
+#[test]
+fn compact_size_written_in_a_wider_form_than_needed_is_rejected() {
+    // 5 fits in one byte, so `FD 05 00` is a non-canonical encoding. Bitcoin Core
+    // rejects it, and so do we.
+    let tx = legacy_tx_with_script_sig(&[0xfd, 0x05, 0x00], 5);
+
+    let err = transaction_weight(&tx).expect_err("non-canonical compact size must be rejected");
+
+    // The scriptSig length prefix starts at byte 41 (version 0..4, input count 4, previous output 5..41).
+    assert_eq!(
+        err,
+        ParseError::NonCanonicalCompactSize {
+            reading: "scriptSig length",
+            offset: 41
+        }
+    );
+}
+
+#[test]
+fn compact_size_one_below_each_width_threshold_is_rejected() {
+    // Each value would have fitted the next-narrower form.
+    let cases: [(&str, &[u8]); 3] = [
+        ("252 in the 3-byte form", &[0xfd, 0xfc, 0x00]),
+        ("65535 in the 5-byte form", &[0xfe, 0xff, 0xff, 0x00, 0x00]),
+        (
+            "4294967295 in the 9-byte form",
+            &[0xff, 0xff, 0xff, 0xff, 0xff, 0x00, 0x00, 0x00, 0x00],
+        ),
+    ];
+
+    for (description, prefix) in cases {
+        let tx = legacy_tx_with_script_sig(prefix, 0);
+
+        let err = transaction_weight(&tx).expect_err(description);
+
+        assert_eq!(
+            err,
+            ParseError::NonCanonicalCompactSize {
+                reading: "scriptSig length",
+                offset: 41
+            },
+            "{description}"
+        );
+    }
+}
