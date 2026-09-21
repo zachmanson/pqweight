@@ -1,0 +1,10 @@
+{
+    "description":  "P2WSH 2-of-3 multisig spend, 1 input, 1 output",
+    "oracle":  {
+                   "weight":  582,
+                   "vsize":  146,
+                   "size":  336
+               },
+    "core_version":  "Satoshi:31.1.0",
+    "recorded_by":  "scripts/record-fixtures.ps1"
+}
