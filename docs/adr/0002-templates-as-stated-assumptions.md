@@ -1,0 +1,3 @@
+# Model PQ spends as stated migration templates, not enforced consensus rules
+
+Bitcoin has no PQ opcode, and today's rules reject witness items over 520 bytes, so a real PQ spend cannot exist yet. We model each baseline spend type with a migration template that states its witness layout, and list the consensus rules a soft fork would have to change (520-byte item limit, sigop accounting) as explicit assumptions instead of enforcing them. Enforcing rules that do not exist would mean inventing numbers inside the tool. Only the 400,000-weight relay limit is checked, because it is real policy, and it is reported as policy, not consensus.
