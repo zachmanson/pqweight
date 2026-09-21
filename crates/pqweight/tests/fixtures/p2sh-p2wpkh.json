@@ -1,0 +1,10 @@
+{
+    "description":  "Wrapped segwit P2SH-P2WPKH spend, 1 input, 1 output",
+    "oracle":  {
+                   "weight":  529,
+                   "vsize":  133,
+                   "size":  214
+               },
+    "core_version":  "Satoshi:31.1.0",
+    "recorded_by":  "scripts/record-fixtures.ps1"
+}

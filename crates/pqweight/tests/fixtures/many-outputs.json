@@ -1,0 +1,10 @@
+{
+    "description":  "Funding transaction with 260 outputs, so the output count needs a 3-byte compact size",
+    "oracle":  {
+                   "weight":  32956,
+                   "vsize":  8239,
+                   "size":  8401
+               },
+    "core_version":  "Satoshi:31.1.0",
+    "recorded_by":  "scripts/record-fixtures.ps1"
+}
