@@ -105,6 +105,22 @@ fn script_length_of_65536_uses_a_five_byte_compact_size() {
 }
 
 #[test]
+fn segwit_flag_other_than_one_is_rejected() {
+    let mut tx = p2wpkh_tx();
+    tx[5] = 0x02; // byte 4 is the marker, byte 5 the flag
+
+    let err = transaction_weight(&tx).expect_err("unknown flag must be rejected");
+
+    assert_eq!(
+        err,
+        ParseError::UnknownSegwitFlag {
+            flag: 0x02,
+            offset: 5
+        }
+    );
+}
+
+#[test]
 fn segwit_marker_with_all_empty_witnesses_is_rejected() {
     let full = p2wpkh_tx();
     // Keep bytes 0..80 (up to the witness), replace the 108-byte witness with a

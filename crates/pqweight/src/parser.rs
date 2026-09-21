@@ -13,6 +13,9 @@ pub enum ParseError {
     /// The segwit marker was present but every input's witness was empty, which
     /// Bitcoin Core rejects. `offset` is where the witness section starts.
     EmptyWitness { offset: usize },
+    /// The byte after the segwit marker was not `0x01`, the only flag Bitcoin Core
+    /// accepts for a transaction with witness data.
+    UnknownSegwitFlag { flag: u8, offset: usize },
 }
 
 struct Reader<'a> {
@@ -80,7 +83,14 @@ pub(crate) fn measure(bytes: &[u8]) -> Result<u64, ParseError> {
     // An input count of zero is the segwit marker; a flag byte follows it.
     let segwit = inputs == 0;
     if segwit {
-        r.skip(1, "segwit flag")?;
+        let flag_offset = r.offset;
+        let flag = r.read_u8("segwit flag")?;
+        if flag != 1 {
+            return Err(ParseError::UnknownSegwitFlag {
+                flag,
+                offset: flag_offset,
+            });
+        }
         inputs = r.read_compact_size("input count")?;
     }
     for _ in 0..inputs {
@@ -124,3 +134,32 @@ pub(crate) fn measure(bytes: &[u8]) -> Result<u64, ParseError> {
     }
     Ok((r.offset - discounted) as u64)
 }
+
+impl std::fmt::Display for ParseError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::Truncated { reading, offset } => {
+                write!(
+                    f,
+                    "unexpected end of input while reading {reading} at byte {offset}"
+                )
+            }
+            Self::TrailingBytes { offset, remaining } => {
+                write!(
+                    f,
+                    "{remaining} unexpected byte(s) after the end of the transaction at byte {offset}"
+                )
+            }
+            Self::EmptyWitness { offset } => write!(
+                f,
+                "segwit marker present but every witness is empty (witness section starts at byte {offset})"
+            ),
+            Self::UnknownSegwitFlag { flag, offset } => write!(
+                f,
+                "unknown segwit flag 0x{flag:02x} at byte {offset}, expected 0x01"
+            ),
+        }
+    }
+}
+
+impl std::error::Error for ParseError {}
