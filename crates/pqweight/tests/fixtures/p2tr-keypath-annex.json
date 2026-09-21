@@ -1,0 +1,10 @@
+{
+    "description":  "Taproot key-path spend with a 3-byte annex appended to the witness. Modified after signing: the signature no longer verifies, only the weight is meaningful",
+    "oracle":  {
+                   "weight":  400,
+                   "vsize":  100,
+                   "size":  154
+               },
+    "core_version":  "Satoshi:31.1.0",
+    "recorded_by":  "scripts/record-fixtures.ps1"
+}

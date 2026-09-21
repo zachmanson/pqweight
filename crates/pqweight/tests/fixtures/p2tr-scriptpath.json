@@ -1,0 +1,10 @@
+{
+    "description":  "Taproot script-path spend (single pk leaf, unspendable internal key), 1 input, 1 output",
+    "oracle":  {
+                   "weight":  465,
+                   "vsize":  117,
+                   "size":  219
+               },
+    "core_version":  "Satoshi:31.1.0",
+    "recorded_by":  "scripts/record-fixtures.ps1"
+}

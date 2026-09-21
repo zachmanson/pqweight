@@ -1,9 +1,9 @@
 {
     "description":  "Native segwit P2WPKH spend, 1 input, 1 output",
     "oracle":  {
-                   "weight":  437,
-                   "vsize":  110,
-                   "size":  191
+                   "weight":  436,
+                   "vsize":  109,
+                   "size":  190
                },
     "core_version":  "Satoshi:31.1.0",
     "recorded_by":  "scripts/record-fixtures.ps1"

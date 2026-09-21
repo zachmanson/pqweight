@@ -108,20 +108,30 @@ try {
     $wpkh = $descriptors | Where-Object { $_.desc -like 'wpkh(*' -and -not $_.internal } | Select-Object -First 1
     if ($wpkh.desc -notmatch '^wpkh\((.+)/0/\*\)#') { throw "unexpected descriptor shape: $($wpkh.desc)" }
     $base = $Matches[1]
-    $multiDesc = "wsh(multi(2,$base/10/0,$base/11/0,$base/12/0))"
-    $info = Invoke-RpcJson 'getdescriptorinfo' @("descriptor=$multiDesc")
-    $checkedDesc = "$multiDesc#$($info.checksum)"
-    $importRequest = '[{"desc":"' + $checkedDesc + '","timestamp":"now"}]'
-    $imported = Invoke-RpcJson 'importdescriptors' @("requests=$importRequest")
-    if (-not $imported[0].success) { throw "importdescriptors failed: $($imported[0].error.message)" }
-    $multisigAddress = (Invoke-RpcJson 'deriveaddresses' @("descriptor=$checkedDesc"))[0]
+    # Imports a descriptor that carries private keys and returns its address. The wallet can
+    # then sign for it. deriveaddresses needs the private form, so the checksum (which
+    # getdescriptorinfo computes for the input as given) is appended to that form.
+    function Import-PrivateDescriptor([string]$Descriptor) {
+        $info = Invoke-RpcJson 'getdescriptorinfo' @("descriptor=$Descriptor")
+        $checked = "$Descriptor#$($info.checksum)"
+        $request = '[{"desc":"' + $checked + '","timestamp":"now"}]'
+        $imported = Invoke-RpcJson 'importdescriptors' @("requests=$request")
+        if (-not $imported[0].success) { throw "importdescriptors failed: $($imported[0].error.message)" }
+        return (Invoke-RpcJson 'deriveaddresses' @("descriptor=$checked"))[0]
+    }
+
+    $multisigAddress = Import-PrivateDescriptor "wsh(multi(2,$base/10/0,$base/11/0,$base/12/0))"
+    # BIP-341's provably unspendable internal key, so only the script path can spend.
+    $nums = '50929b74c1a04954b78b4b6035e97a5e078a5a0f28ec96d547bfee9ace803ac0'
+    $scriptPathAddress = Import-PrivateDescriptor "tr($nums,pk($base/13/0))"
 
     $types = @(
         @{ Name = 'p2pkh';       Description = 'Legacy P2PKH spend, 1 input, 1 output';                   Address = (Invoke-Rpc 'getnewaddress' @('address_type=legacy')).Trim() },
         @{ Name = 'p2wpkh';      Description = 'Native segwit P2WPKH spend, 1 input, 1 output';           Address = (Invoke-Rpc 'getnewaddress' @('address_type=bech32')).Trim() },
         @{ Name = 'p2sh-p2wpkh'; Description = 'Wrapped segwit P2SH-P2WPKH spend, 1 input, 1 output';    Address = (Invoke-Rpc 'getnewaddress' @('address_type=p2sh-segwit')).Trim() },
         @{ Name = 'p2wsh-multisig'; Description = 'P2WSH 2-of-3 multisig spend, 1 input, 1 output';      Address = $multisigAddress },
-        @{ Name = 'p2tr-keypath'; Description = 'Taproot key-path spend, 1 input, 1 output';             Address = (Invoke-Rpc 'getnewaddress' @('address_type=bech32m')).Trim() }
+        @{ Name = 'p2tr-keypath'; Description = 'Taproot key-path spend, 1 input, 1 output';             Address = (Invoke-Rpc 'getnewaddress' @('address_type=bech32m')).Trim() },
+        @{ Name = 'p2tr-scriptpath'; Description = 'Taproot script-path spend (single pk leaf, unspendable internal key), 1 input, 1 output'; Address = $scriptPathAddress }
     )
 
     # One funding transaction pays every address. Separate sends could spend each other's
@@ -131,6 +141,7 @@ try {
     Invoke-Rpc 'generatetoaddress' @('nblocks=1', "address=$minerAddress") | Out-Null
 
     Write-Host "Writing fixtures to $OutDir"
+    $signedByName = @{}
     foreach ($t in $types) {
         $unspentRaw = Invoke-Rpc 'listunspent' @('minconf=1', ('addresses=["' + $t.Address + '"]'))
         $utxo = @($unspentRaw | ConvertFrom-Json)[0]
@@ -142,8 +153,27 @@ try {
         $signed = Invoke-RpcJson 'signrawtransactionwithwallet' @("hexstring=$raw")
         if (-not $signed.complete) { throw "signing incomplete for $($t.Name)" }
         $decoded = Invoke-RpcJson 'decoderawtransaction' @("hexstring=$($signed.hex)")
+        $signedByName[$t.Name] = $signed.hex
         Write-Fixture -Name $t.Name -Description $t.Description -Hex $signed.hex -Decoded $decoded -CoreVersion $coreVersion
     }
+
+    # A transaction with 260 outputs: the output count no longer fits in one byte, so it is
+    # serialized with the 3-byte compact size (0xFD prefix). Paid from the wallet's own coins.
+    $recipients = 1..260 | ForEach-Object { '"' + (Invoke-Rpc 'getnewaddress' @('address_type=bech32')).Trim() + '":0.01' }
+    $manyTxid = (Invoke-Rpc 'sendmany' @('amounts={' + ($recipients -join ',') + '}')).Trim()
+    $manyHex = (Invoke-Rpc 'getrawtransaction' @("txid=$manyTxid")).Trim()
+    $manyDecoded = Invoke-RpcJson 'decoderawtransaction' @("hexstring=$manyHex")
+    Write-Fixture -Name 'many-outputs' -Description 'Funding transaction with 260 outputs, so the output count needs a 3-byte compact size' -Hex $manyHex -Decoded $manyDecoded -CoreVersion $coreVersion
+
+    # Regtest cannot produce an annex, so append one to the witness of the key-path spend.
+    # Core still reports the weight, but the signature no longer verifies. The key-path
+    # witness is [item count 01][sig length 40][64-byte signature], followed by locktime.
+    $keyHex = $signedByName['p2tr-keypath']
+    $witnessStart = $keyHex.Length - 8 - (2 + 2 + 128)
+    if ($keyHex.Substring($witnessStart, 4) -ne '0140') { throw 'unexpected key-path witness layout' }
+    $annexHex = $keyHex.Substring(0, $witnessStart) + '02' + $keyHex.Substring($witnessStart + 2, 130) + '03501234' + $keyHex.Substring($keyHex.Length - 8)
+    $annexDecoded = Invoke-RpcJson 'decoderawtransaction' @("hexstring=$annexHex")
+    Write-Fixture -Name 'p2tr-keypath-annex' -Description 'Taproot key-path spend with a 3-byte annex appended to the witness. Modified after signing: the signature no longer verifies, only the weight is meaningful' -Hex $annexHex -Decoded $annexDecoded -CoreVersion $coreVersion
 }
 finally {
     Invoke-Cli -CliArgs @('-regtest', "-datadir=$dataDir", 'stop') | Out-Null
