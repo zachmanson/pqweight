@@ -37,3 +37,15 @@ A library function `aggregate(lines, ParameterSet) -> AggregateResult` that take
 ## Open questions for the next session
 
 None blocking — the decisions above are final enough to start the TDD loop directly. If anything, the CLI input source (file path arg vs. stdin-only) is worth a quick check with the user before writing the CLI smoke tests, mirroring how `weight`/`migrate` accept either.
+
+## Comments
+
+Implemented via TDD (commit f303996): `aggregate()` in `crates/pqweight/src/aggregate.rs`,
+`pqweight aggregate` CLI subcommand in `crates/pqweight-cli/src/main.rs`. CLI input source
+resolved as "both" (optional file path arg, else stdin), per the open question above.
+`/code-review` (Standards + Spec) run before commit; findings addressed: shared
+`--scheme`/`--fee-rate` parsing extracted, `decode_hex` kept crate-internal rather than
+becoming a second public seam, `AggregateResult.fee` renamed to `fees`, CLI test ordering
+fixed, "fully mapped"/"partially mapped" added to `CONTEXT.md`. All Testing Decisions
+scenarios covered; `cargo fmt --all --check`, `cargo clippy --workspace --all-targets --
+-D warnings`, and `cargo test --workspace` all clean (63 tests passing).
