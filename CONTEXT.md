@@ -43,3 +43,10 @@ _Avoid_: Algorithm, cipher
 **Parameter set**:
 A specific configuration of a Signature scheme with fixed signature and public key sizes, such as ML-DSA-44.
 _Avoid_: Variant, level
+
+**Baseline spend type**:
+The kind of spend a real input performs today, such as P2WPKH or P2TR key-path. Each Migration template covers exactly one.
+_Avoid_: Script type, address type
+
+**Input result**:
+The outcome for one input of a transaction: either its Migration template weight, or Unmapped. A transaction has a migrated total only when every input is mapped.

@@ -1,5 +1,8 @@
 //! Helpers shared by the integration tests.
 
+// Each test binary compiles this module separately and uses only some helpers.
+#![allow(dead_code)]
+
 use std::path::{Path, PathBuf};
 
 pub fn fixtures_dir() -> PathBuf {
