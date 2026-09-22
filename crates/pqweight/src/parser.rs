@@ -29,13 +29,19 @@ struct Reader<'a> {
     offset: usize,
 }
 
-impl Reader<'_> {
+impl<'a> Reader<'a> {
     fn skip(&mut self, len: u64, reading: &'static str) -> Result<(), ParseError> {
+        self.take(len, reading).map(|_| ())
+    }
+
+    /// Reads the next `len` bytes and returns them.
+    fn take(&mut self, len: u64, reading: &'static str) -> Result<&'a [u8], ParseError> {
         let remaining = self.bytes.len() - self.offset;
         match usize::try_from(len) {
             Ok(len) if len <= remaining => {
+                let taken = &self.bytes[self.offset..self.offset + len];
                 self.offset += len;
-                Ok(())
+                Ok(taken)
             }
             _ => Err(ParseError::Truncated {
                 reading,
@@ -102,8 +108,28 @@ impl Reader<'_> {
     }
 }
 
+/// One input's spending data: what its scriptSig and witness contain.
+pub(crate) struct ParsedInput<'a> {
+    pub script_sig: &'a [u8],
+    /// `None` when the transaction has no witness section at all (a legacy,
+    /// non-segwit transaction). `Some` when it does, even if this particular
+    /// input's own witness is empty.
+    pub witness: Option<Vec<&'a [u8]>>,
+}
+
+/// A transaction split into the parts that migration needs.
+pub(crate) struct ParsedTransaction<'a> {
+    /// Serialization without marker, flag and witnesses.
+    pub stripped_size: u64,
+    pub inputs: Vec<ParsedInput<'a>>,
+}
+
 /// Returns the stripped size: the serialization without marker, flag and witnesses.
 pub(crate) fn measure(bytes: &[u8]) -> Result<u64, ParseError> {
+    parse(bytes).map(|tx| tx.stripped_size)
+}
+
+pub(crate) fn parse(bytes: &[u8]) -> Result<ParsedTransaction<'_>, ParseError> {
     let mut r = Reader { bytes, offset: 0 };
     r.skip(4, "version")?;
     let mut inputs = r.read_compact_size("input count")?;
@@ -120,11 +146,16 @@ pub(crate) fn measure(bytes: &[u8]) -> Result<u64, ParseError> {
         }
         inputs = r.read_compact_size("input count")?;
     }
+    let mut parsed_inputs = Vec::new();
     for _ in 0..inputs {
         r.skip(36, "previous output")?;
         let script_len = r.read_compact_size("scriptSig length")?;
-        r.skip(script_len, "scriptSig")?;
+        let script_sig = r.take(script_len, "scriptSig")?;
         r.skip(4, "sequence")?;
+        parsed_inputs.push(ParsedInput {
+            script_sig,
+            witness: None,
+        });
     }
     let outputs = r.read_compact_size("output count")?;
     for _ in 0..outputs {
@@ -136,13 +167,15 @@ pub(crate) fn measure(bytes: &[u8]) -> Result<u64, ParseError> {
     if segwit {
         let witness_start = r.offset;
         let mut any_witness = false;
-        for _ in 0..inputs {
+        for input in &mut parsed_inputs {
             let items = r.read_compact_size("witness item count")?;
             any_witness |= items > 0;
+            let mut witness = Vec::new();
             for _ in 0..items {
                 let item_len = r.read_compact_size("witness item length")?;
-                r.skip(item_len, "witness item")?;
+                witness.push(r.take(item_len, "witness item")?);
             }
+            input.witness = Some(witness);
         }
         if !any_witness {
             return Err(ParseError::EmptyWitness {
@@ -159,7 +192,10 @@ pub(crate) fn measure(bytes: &[u8]) -> Result<u64, ParseError> {
             remaining: bytes.len() - r.offset,
         });
     }
-    Ok((r.offset - discounted) as u64)
+    Ok(ParsedTransaction {
+        stripped_size: (r.offset - discounted) as u64,
+        inputs: parsed_inputs,
+    })
 }
 
 impl std::fmt::Display for ParseError {

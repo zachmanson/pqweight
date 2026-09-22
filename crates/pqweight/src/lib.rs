@@ -1,7 +1,11 @@
 //! Bitcoin transaction weight, and how it changes under post-quantum signatures.
 
+mod fee;
+mod migration;
 mod parser;
 
+pub use fee::{FeeRate, FeeRateError, fee};
+pub use migration::{BaselineSpendType, InputResult, Migration, ParameterSet, migrate};
 pub use parser::ParseError;
 
 /// The crate version, so the CLI can report which library it was built against.
