@@ -50,3 +50,9 @@ _Avoid_: Script type, address type
 
 **Input result**:
 The outcome for one input of a transaction: either its Migration template weight, or Unmapped. A transaction has a migrated total only when every input is mapped.
+
+**Fully mapped**:
+A transaction whose Input result is Mapped for every input. Only fully mapped transactions contribute to a migrated total, individually or summed across a batch.
+
+**Partially mapped**:
+A transaction with at least one Unmapped input, including one where every input is Unmapped. Its baseline weight still counts; it never contributes to a migrated total.

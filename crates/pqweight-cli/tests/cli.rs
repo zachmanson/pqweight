@@ -210,3 +210,79 @@ fn migrate_command_rejects_a_bad_fee_rate() {
     assert!(!output.status.success());
     assert!(stderr(&output).contains("fee"), "{}", stderr(&output));
 }
+
+/// A path in the OS temp directory unique to this test process and name, so
+/// parallel test runs never collide.
+fn scratch_file(name: &str) -> std::path::PathBuf {
+    std::env::temp_dir().join(format!(
+        "pqweight-cli-test-{name}-{}.txt",
+        std::process::id()
+    ))
+}
+
+#[test]
+fn aggregate_command_sums_totals_over_a_multi_line_file() {
+    let fx = p2wpkh_fixture();
+    let path = scratch_file("sums-totals");
+    // Two lines, the same fixture twice, so the expected sums are just double
+    // the fixture's own already-verified numbers.
+    std::fs::write(&path, format!("{}\n{}\n", fx.hex, fx.hex)).unwrap();
+
+    let output = run(
+        &["aggregate", "--scheme", "ml-dsa-44", path.to_str().unwrap()],
+        None,
+    );
+    std::fs::remove_file(&path).ok();
+
+    assert!(output.status.success(), "{}", stderr(&output));
+    let text = stdout(&output);
+    assert!(text.contains("transactions parsed: 2"), "{text}");
+    assert!(text.contains("fully mapped: 2"), "{text}");
+    assert!(text.contains("parse errors: 0"), "{text}");
+    assert!(
+        text.contains(&format!("baseline weight: {}", 2 * fx.weight)),
+        "{text}"
+    );
+    // PQ weight per p2wpkh input at ML-DSA-44 is 4069 WU (see
+    // pqweight::tests::migrate::p2wpkh_input_is_migrated_to_an_ml_dsa_44_witness).
+    assert!(
+        text.contains(&format!("migrated weight: {}", 2 * 4069)),
+        "{text}"
+    );
+}
+
+#[test]
+fn aggregate_command_reads_from_stdin_when_no_path_is_given() {
+    let fx = p2wpkh_fixture();
+
+    let output = run(
+        &["aggregate", "--scheme", "ml-dsa-44"],
+        Some(&format!("{}\n{}\n", fx.hex, fx.hex)),
+    );
+
+    assert!(output.status.success(), "{}", stderr(&output));
+    assert!(
+        stdout(&output).contains("transactions parsed: 2"),
+        "{}",
+        stdout(&output)
+    );
+}
+
+#[test]
+fn aggregate_command_records_a_bad_line_without_aborting_the_batch() {
+    let fx = p2wpkh_fixture();
+    let path = scratch_file("bad-line");
+    std::fs::write(&path, format!("{}\nzz\n{}\n", fx.hex, fx.hex)).unwrap();
+
+    let output = run(
+        &["aggregate", "--scheme", "ml-dsa-44", path.to_str().unwrap()],
+        None,
+    );
+    std::fs::remove_file(&path).ok();
+
+    assert!(output.status.success(), "{}", stderr(&output));
+    let text = stdout(&output);
+    assert!(text.contains("transactions parsed: 2"), "{text}");
+    assert!(text.contains("parse errors: 1"), "{text}");
+    assert!(text.contains("line 2"), "{text}");
+}

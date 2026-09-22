@@ -1,9 +1,14 @@
 //! Bitcoin transaction weight, and how it changes under post-quantum signatures.
 
+mod aggregate;
 mod fee;
 mod migration;
 mod parser;
 
+pub use aggregate::{
+    AggregateCounts, AggregateError, AggregateFeeTotals, AggregateResult, AggregateTotals,
+    aggregate,
+};
 pub use fee::{FeeRate, FeeRateError, fee};
 pub use migration::{BaselineSpendType, InputResult, Migration, ParameterSet, migrate};
 pub use parser::ParseError;
@@ -25,6 +30,25 @@ pub struct TransactionWeight {
     pub stripped_size: u64,
     /// Full serialization, including witness data.
     pub total_size: u64,
+}
+
+/// Decodes a hex string into raw bytes.
+///
+/// Not part of the public API: `aggregate()` is the only new seam this slice
+/// adds (see the ticket's Seams decision), so this stays crate-internal
+/// rather than becoming a second one. The CLI keeps its own copy.
+fn decode_hex(hex: &str) -> Result<Vec<u8>, String> {
+    if !hex.len().is_multiple_of(2) {
+        return Err("invalid hex: odd number of digits".to_string());
+    }
+    (0..hex.len())
+        .step_by(2)
+        .map(|i| {
+            hex.get(i..i + 2)
+                .and_then(|pair| u8::from_str_radix(pair, 16).ok())
+                .ok_or_else(|| format!("invalid hex at position {i}"))
+        })
+        .collect()
 }
 
 /// Measures the **weight** of a raw serialized transaction.

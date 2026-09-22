@@ -1,7 +1,10 @@
 use std::io::Read;
 use std::process::ExitCode;
 
-use pqweight::{BaselineSpendType, FeeRate, InputResult, Migration, ParameterSet, fee};
+use pqweight::{
+    AggregateResult, BaselineSpendType, FeeRate, InputResult, Migration, ParameterSet, aggregate,
+    fee,
+};
 
 fn main() -> ExitCode {
     let args: Vec<String> = std::env::args().skip(1).collect();
@@ -21,11 +24,12 @@ fn run(args: &[String]) -> Result<String, String> {
     match args.first().map(String::as_str) {
         Some("weight") => run_weight(&args[1..]),
         Some("migrate") => run_migrate(&args[1..]),
+        Some("aggregate") => run_aggregate(&args[1..]),
         _ => Err(USAGE.to_string()),
     }
 }
 
-const USAGE: &str = "usage: pqweight weight [--json] [<hex>]\n       pqweight migrate --scheme <scheme> [--fee-rate <rate>] [--json] [<hex>]";
+const USAGE: &str = "usage: pqweight weight [--json] [<hex>]\n       pqweight migrate --scheme <scheme> [--fee-rate <rate>] [--json] [<hex>]\n       pqweight aggregate --scheme <scheme> [--fee-rate <rate>] [<path>]";
 
 fn run_weight(args: &[String]) -> Result<String, String> {
     let json = args.iter().any(|arg| arg == "--json");
@@ -50,10 +54,14 @@ fn run_weight(args: &[String]) -> Result<String, String> {
     }
 }
 
-fn run_migrate(args: &[String]) -> Result<String, String> {
+/// Parses the `--scheme <scheme>` and `--fee-rate <rate>` flags `migrate` and
+/// `aggregate` share, returning the parsed values and the remaining
+/// (non-flag) arguments.
+fn parse_scheme_and_fee_rate_args(
+    args: &[String],
+) -> Result<(ParameterSet, Option<FeeRate>, Vec<&str>), String> {
     let mut scheme = None;
     let mut fee_rate_arg = None;
-    let mut json = false;
     let mut positional = Vec::new();
     let mut iter = args.iter();
     while let Some(arg) = iter.next() {
@@ -64,7 +72,6 @@ fn run_migrate(args: &[String]) -> Result<String, String> {
             "--fee-rate" => {
                 fee_rate_arg = Some(iter.next().ok_or("--fee-rate needs a value")?.as_str());
             }
-            "--json" => json = true,
             other => positional.push(other),
         }
     }
@@ -75,6 +82,17 @@ fn run_migrate(args: &[String]) -> Result<String, String> {
             FeeRate::parse(rate).map_err(|err| format!("invalid fee rate {rate:?}: {err:?}"))
         })
         .transpose()?;
+    Ok((parameter_set, fee_rate, positional))
+}
+
+fn run_migrate(args: &[String]) -> Result<String, String> {
+    let json = args.iter().any(|arg| arg == "--json");
+    let args: Vec<String> = args
+        .iter()
+        .filter(|arg| *arg != "--json")
+        .cloned()
+        .collect();
+    let (parameter_set, fee_rate, positional) = parse_scheme_and_fee_rate_args(&args)?;
 
     let hex = match positional.as_slice() {
         [hex] => (*hex).to_string(),
@@ -90,6 +108,58 @@ fn run_migrate(args: &[String]) -> Result<String, String> {
     } else {
         Ok(migrate_human(&migration, baseline.vsize, fee_rate))
     }
+}
+
+fn run_aggregate(args: &[String]) -> Result<String, String> {
+    let (parameter_set, fee_rate, positional) = parse_scheme_and_fee_rate_args(args)?;
+
+    let text = match positional.as_slice() {
+        [path] => {
+            std::fs::read_to_string(path).map_err(|err| format!("could not read {path}: {err}"))?
+        }
+        [] => read_stdin()?,
+        _ => return Err(USAGE.to_string()),
+    };
+
+    let result = aggregate(text.lines().map(str::to_string), parameter_set, fee_rate);
+    Ok(aggregate_human(&result))
+}
+
+fn aggregate_human(result: &AggregateResult) -> String {
+    let mut lines = vec![
+        format!("transactions parsed: {}", result.counts.parsed),
+        format!("fully mapped: {}", result.counts.fully_mapped),
+        format!("partially mapped: {}", result.counts.partially_mapped),
+        format!("unmapped inputs: {}", result.counts.unmapped_inputs),
+        format!("parse errors: {}", result.counts.parse_errors),
+        format!("baseline weight: {}", result.baseline.weight),
+        format!("baseline vsize: {}", result.baseline.vsize),
+    ];
+    match &result.migrated {
+        Some(total) => {
+            lines.push(format!("migrated weight: {}", total.weight));
+            lines.push(format!("migrated vsize: {}", total.vsize));
+        }
+        None => {
+            lines.push("migrated total: unavailable (no fully mapped transactions)".to_string());
+        }
+    }
+    if let Some(fees) = &result.fees {
+        lines.push(format!("baseline fee: {} sat", fees.baseline));
+        match fees.migrated {
+            Some(migrated_fee) => lines.push(format!("migrated fee: {migrated_fee} sat")),
+            None => {
+                lines.push("migrated fee: unavailable (no fully mapped transactions)".to_string());
+            }
+        }
+    }
+    if !result.errors.is_empty() {
+        lines.push("errors:".to_string());
+        for error in &result.errors {
+            lines.push(format!("- line {}: {}", error.line, error.message));
+        }
+    }
+    lines.join("\n")
 }
 
 fn parse_scheme(scheme: &str) -> Result<ParameterSet, String> {
