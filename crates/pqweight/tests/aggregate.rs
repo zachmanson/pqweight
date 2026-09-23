@@ -172,11 +172,11 @@ fn fee_totals_sum_per_transaction_fees_not_the_fee_of_a_summed_vsize() {
 fn breakdown_has_one_row_per_spend_type_and_unmapped_reason_in_order_of_first_appearance() {
     // p2wpkh: Input weight 270 (41 non-witness bytes x 4 + 106 witness bytes),
     // ML-DSA-44 template weight 3903 (see migrate.rs).
-    // p2tr-scriptpath: 41 non-witness bytes x 4 = 164, witness: item count 1 +
-    // (1 + 64 signature) + (1 + 34 script) + (1 + 33 control block) = 135.
+    // p2tr-keypath-annex: 41 non-witness bytes x 4 = 164, witness: item count 1
+    // + (1 + 64 signature) + (1 + 3 annex) = 70.
     let lines = vec![
         fixture_hex("p2wpkh"),
-        fixture_hex("p2tr-scriptpath"),
+        fixture_hex("p2tr-keypath-annex"),
         fixture_hex("p2wpkh"),
     ];
 
@@ -192,9 +192,9 @@ fn breakdown_has_one_row_per_spend_type_and_unmapped_reason_in_order_of_first_ap
                 migrated_weight: Some(2 * 3903),
             },
             BreakdownRow {
-                kind: BreakdownKind::Unmapped(UnmappedReason::P2trScriptPath),
+                kind: BreakdownKind::Unmapped(UnmappedReason::P2trKeyPathAnnex),
                 inputs: 1,
-                baseline_weight: 164 + 135,
+                baseline_weight: 164 + 70,
                 migrated_weight: None,
             },
         ]
@@ -203,13 +203,13 @@ fn breakdown_has_one_row_per_spend_type_and_unmapped_reason_in_order_of_first_ap
 
 #[test]
 fn partially_mapped_transactions_have_their_own_baseline_totals() {
-    // Only p2tr-scriptpath is partially mapped: Oracle weight 465, vsize 117
-    // (p2tr-scriptpath.json). The report needs this to weigh the all-or-nothing
+    // Only p2tr-keypath-annex is partially mapped: Oracle weight 400, vsize 100
+    // (p2tr-keypath-annex.json). The report needs this to weigh the all-or-nothing
     // migrated-total rule by weight, not only by transaction count.
-    let lines = vec![fixture_hex("p2wpkh"), fixture_hex("p2tr-scriptpath")];
+    let lines = vec![fixture_hex("p2wpkh"), fixture_hex("p2tr-keypath-annex")];
 
     let result = aggregate(lines.into_iter(), ParameterSet::MlDsa44, None);
 
-    assert_eq!(result.partially_mapped.weight, 465);
-    assert_eq!(result.partially_mapped.vsize, 117);
+    assert_eq!(result.partially_mapped.weight, 400);
+    assert_eq!(result.partially_mapped.vsize, 100);
 }

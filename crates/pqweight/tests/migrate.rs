@@ -197,11 +197,267 @@ fn unmapped_reason(tx: &[u8]) -> Option<UnmappedReason> {
 }
 
 #[test]
-fn p2tr_script_path_spend_is_unmapped_as_p2tr_script_path() {
+fn p2tr_single_key_leaf_is_migrated_with_the_pq_key_in_the_leaf_and_no_internal_key() {
+    let tx = load_fixture("p2tr-scriptpath");
+
+    let migration = migrate(&tx, ParameterSet::MlDsa44).expect("valid transaction");
+
+    // Fixture witness: [64-byte signature, 34-byte leaf `20 <32-byte key> ac`,
+    // 33-byte control block `c1 <internal key>`] = 1 + 65 + 35 + 34 = 135 bytes.
+    // ML-DSA-44 witness [PQ signature, leaf, control block]:
+    //   item count 1
+    //   + signature: 3-byte length prefix + 2420 = 2423
+    //   + leaf: OP_PUSHDATA2 3 + 1312 key + OP_CHECKSIG 1 = 1316, plus its
+    //     3-byte length prefix = 1319
+    //   + control block: leaf-version byte only (no internal key, no Merkle
+    //     path) = 1, plus its 1-byte length prefix = 2
+    //   = 1 + 2423 + 1319 + 2 = 3745 WU.
+    // Non-witness part: empty scriptSig, 32 + 4 + 1 + 4 = 41 bytes = 164 WU.
+    // Input template weight: 164 + 3745 = 3909 WU.
     assert_eq!(
-        unmapped_reason(&load_fixture("p2tr-scriptpath")),
-        Some(UnmappedReason::P2trScriptPath)
+        summaries(&migration.inputs),
+        vec![Summary::Mapped(
+            BaselineSpendType::P2trScriptPathSingleKey,
+            3909
+        )]
     );
+
+    // Stripped size and marker are unchanged, so migrated weight
+    // = 465 (Oracle) - 135 + 3745 = 4075 WU, vsize ceil(4075 / 4) = 1019.
+    let total = migration.migrated.expect("every input is mapped");
+    assert_eq!(total.weight, 4075);
+    assert_eq!(total.vsize, 1019);
+}
+
+#[test]
+fn p2tr_single_key_leaf_pushes_the_pq_key_with_the_shortest_push() {
+    let tx = load_fixture("p2tr-scriptpath");
+
+    // Same fixture as above: 164 WU non-witness, control block migrates to
+    // 1 byte + 1-byte prefix = 2, item count 1.
+    // SLH-DSA-128s: 32-byte key, so the leaf keeps its direct push and stays
+    // 34 bytes (+1 prefix = 35). Signature 3 + 7856 = 7859.
+    //   1 + 7859 + 35 + 2 = 7897; 164 + 7897 = 8061 WU.
+    // Falcon-512: 897-byte key needs OP_PUSHDATA2: leaf 3 + 897 + 1 = 901
+    // (+3 prefix = 904). Signature 3 + 666 = 669.
+    //   1 + 669 + 904 + 2 = 1576; 164 + 1576 = 1740 WU.
+    let cases = [
+        (ParameterSet::SlhDsa128s, 8061),
+        (ParameterSet::Falcon512, 1740),
+    ];
+    for (parameter_set, expected) in cases {
+        let migration = migrate(&tx, parameter_set).expect("valid transaction");
+        assert_eq!(
+            summaries(&migration.inputs),
+            vec![Summary::Mapped(
+                BaselineSpendType::P2trScriptPathSingleKey,
+                expected
+            )],
+            "{parameter_set:?}"
+        );
+    }
+}
+
+#[test]
+fn p2tr_inscription_envelope_keeps_its_data_bytes_unchanged() {
+    let tx = load_fixture("p2tr-scriptpath-envelope");
+
+    let migration = migrate(&tx, ParameterSet::MlDsa44).expect("valid transaction");
+
+    // Mainnet witness: [64-byte signature, 83-byte leaf `20 <key> ac 00 63
+    // 03 "ord" 51 18 "text/plain;charset=utf-8" 00 0a "968210.bitmap" 68`,
+    // 33-byte control block] = 1 + 65 + 84 + 34 = 184 bytes.
+    // ML-DSA-44: the 50 envelope bytes after the key push stay as they are.
+    //   item count 1 + signature 2423
+    //   + leaf: 83 - 33 (direct key push) + 1315 (OP_PUSHDATA2 key push) = 1365,
+    //     plus its 3-byte prefix = 1368
+    //   + control block 1 + 1 = 2
+    //   = 3794; 164 non-witness + 3794 = 3958 WU.
+    assert_eq!(
+        summaries(&migration.inputs),
+        vec![Summary::Mapped(
+            BaselineSpendType::P2trScriptPathSingleKey,
+            3958
+        )]
+    );
+    // 562 (Oracle) - 184 + 3794 = 4172 WU, vsize ceil(4172 / 4) = 1043.
+    let total = migration.migrated.expect("every input is mapped");
+    assert_eq!(total.weight, 4172);
+    assert_eq!(total.vsize, 1043);
+}
+
+#[test]
+fn p2tr_dropped_tag_leaf_is_migrated_alongside_a_key_path_input() {
+    let tx = load_fixture("p2tr-scriptpath-dropped-tag");
+
+    let migration = migrate(&tx, ParameterSet::MlDsa44).expect("valid transaction");
+
+    // Input 0, mainnet witness [64-byte signature, 39-byte leaf
+    // `03 <3-byte tag> 75 20 <key> ac`, 33-byte control block]
+    // = 1 + 65 + 40 + 34 = 140 bytes.
+    //   item count 1 + signature 2423
+    //   + leaf: 39 - 33 + 1315 = 1321, plus its 3-byte prefix = 1324
+    //   + control block 2
+    //   = 3750; 164 + 3750 = 3914 WU.
+    // Input 1 is a key-path spend (witness 1 + 65 = 66 bytes), migrated to
+    // [PQ signature, PQ key]: 1 + 2423 + 1315 = 3739; 164 + 3739 = 3903 WU.
+    assert_eq!(
+        summaries(&migration.inputs),
+        vec![
+            Summary::Mapped(BaselineSpendType::P2trScriptPathSingleKey, 3914),
+            Summary::Mapped(BaselineSpendType::P2trKeyPath, 3903),
+        ]
+    );
+    // 872 (Oracle) - 140 - 66 + 3750 + 3739 = 8155 WU, vsize ceil(8155 / 4) = 2039.
+    let total = migration.migrated.expect("every input is mapped");
+    assert_eq!(total.weight, 8155);
+    assert_eq!(total.vsize, 2039);
+}
+
+/// A leaf `<32-byte key> OP_CHECKSIG` (34 bytes).
+fn single_key_leaf() -> Vec<u8> {
+    let mut leaf = vec![0x20];
+    leaf.extend_from_slice(&[7u8; 32]);
+    leaf.push(0xac);
+    leaf
+}
+
+/// A control block with tapscript leaf version `0xc0` and `path_hashes` Merkle
+/// path hashes after the internal key.
+fn control_block(path_hashes: usize) -> Vec<u8> {
+    let mut block = vec![0xc0];
+    block.extend(vec![9u8; 32 * (1 + path_hashes)]);
+    block
+}
+
+#[test]
+fn p2tr_single_key_leaf_keeps_each_merkle_path_hash_at_32_bytes() {
+    let signature = [1u8; 64];
+    let leaf = single_key_leaf();
+    let control_block = control_block(1);
+    let tx = segwit_tx(&[], &[&signature, &leaf, &control_block]);
+
+    let migration = migrate(&tx, ParameterSet::MlDsa44).expect("valid transaction");
+
+    // As the fixture at ML-DSA-44 (signature 2423, leaf 1319, item count 1),
+    // but the 65-byte control block keeps its one path hash: 1 + 32 = 33
+    // (+1 prefix = 34). 1 + 2423 + 1319 + 34 = 3777; 164 + 3777 = 3941 WU.
+    assert_eq!(
+        summaries(&migration.inputs),
+        vec![Summary::Mapped(
+            BaselineSpendType::P2trScriptPathSingleKey,
+            3941
+        )]
+    );
+}
+
+#[test]
+fn p2tr_script_path_near_misses_of_a_single_key_leaf_are_unmapped() {
+    let key = [7u8; 32];
+    let signature = [1u8; 64];
+    let control_block = control_block(0);
+    let leaf = |parts: &[&[u8]]| parts.concat();
+    let push_key: &[u8] = &[&[0x20][..], &key].concat();
+    let checksig: &[u8] = &[0xac];
+    let checksigverify: &[u8] = &[0xad];
+
+    let two_key_chain = leaf(&[push_key, checksigverify, push_key, checksig]);
+    let key_from_stack = leaf(&[checksig]);
+    let compressed_key = leaf(&[&[0x21, 0x02], &[7u8; 32], checksig]);
+    let pushdata1_key = leaf(&[&[0x4c, 0x20], &key, checksig]);
+    // multi_a 1-of-2: <key> CHECKSIG <key> CHECKSIGADD OP_1 OP_NUMEQUAL.
+    let multi_a = leaf(&[push_key, checksig, push_key, &[0xba, 0x51, 0x9c]]);
+    let no_check = leaf(&[&[0x51]]);
+    let truncated_push = leaf(&[push_key, checksig, &[0x20, 0x00]]);
+    // OP_SUCCESS80 anywhere in a tapscript leaf makes it succeed without a signature.
+    let op_success = leaf(&[push_key, checksig, &[0x50]]);
+    let single_key = single_key_leaf();
+    let mut wrong_leaf_version = control_block.clone();
+    wrong_leaf_version[0] = 0xc2;
+
+    // (name, witness, P2TR script-path is the Unmapped reason)
+    let cases: [(&str, Vec<&[u8]>, bool); 12] = [
+        (
+            "two-key CHECKSIGVERIFY chain",
+            vec![&[], &signature, &two_key_chain, &control_block],
+            true,
+        ),
+        (
+            "key taken from the stack",
+            vec![&signature, &key, &key_from_stack, &control_block],
+            true,
+        ),
+        (
+            "33-byte key push",
+            vec![&signature, &compressed_key, &control_block],
+            true,
+        ),
+        (
+            "32-byte key pushed with OP_PUSHDATA1",
+            vec![&signature, &pushdata1_key, &control_block],
+            true,
+        ),
+        (
+            "multi_a leaf with one signer",
+            vec![&[], &signature, &multi_a, &control_block],
+            true,
+        ),
+        (
+            "no signature check",
+            vec![&signature, &no_check, &control_block],
+            true,
+        ),
+        (
+            "truncated push",
+            vec![&signature, &truncated_push, &control_block],
+            true,
+        ),
+        (
+            "OP_SUCCESS opcode",
+            vec![&signature, &op_success, &control_block],
+            true,
+        ),
+        (
+            "two 64-byte stack items",
+            vec![&signature, &signature, &single_key, &control_block],
+            true,
+        ),
+        (
+            "empty signature, no 64 or 65-byte item",
+            vec![&[], &single_key, &control_block],
+            true,
+        ),
+        (
+            "63-byte signature",
+            vec![&signature[..63], &single_key, &control_block],
+            true,
+        ),
+        (
+            "leaf version 0xc2",
+            vec![&signature, &single_key, &wrong_leaf_version],
+            false,
+        ),
+    ];
+    for (name, witness, is_script_path_reason) in cases {
+        let reason = unmapped_reason(&segwit_tx(&[], &witness));
+        assert!(reason.is_some(), "{name}: must be Unmapped");
+        assert_eq!(
+            reason == Some(UnmappedReason::P2trScriptPath),
+            is_script_path_reason,
+            "{name}: reason {reason:?}"
+        );
+    }
+}
+
+#[test]
+fn p2tr_single_key_leaf_with_an_annex_is_unmapped_as_p2tr_script_path() {
+    let signature = [1u8; 64];
+    let leaf = single_key_leaf();
+    let control_block = control_block(0);
+    let annex = [0x50u8, 0x01];
+    let tx = segwit_tx(&[], &[&signature, &leaf, &control_block, &annex]);
+
+    assert_eq!(unmapped_reason(&tx), Some(UnmappedReason::P2trScriptPath));
 }
 
 #[test]
@@ -995,6 +1251,37 @@ fn p2sh_multisig_inputs_state_that_the_script_moves_into_the_witness() {
 }
 
 #[test]
+fn p2tr_single_key_leaf_inputs_state_that_outputs_commit_to_the_merkle_root_without_an_internal_key()
+ {
+    let tx = load_fixture("p2tr-scriptpath");
+
+    let migration = migrate(&tx, ParameterSet::MlDsa44).expect("valid transaction");
+
+    let assumptions = &migration.assumptions;
+    assert!(mentions(
+        assumptions,
+        &["Merkle root", "no internal key", "BIP-360"]
+    ));
+    assert!(mentions(
+        assumptions,
+        &["control block", "leaf-version byte"]
+    ));
+    assert!(!mentions(assumptions, &["OP_CHECKMULTISIG"]));
+}
+
+#[test]
+fn the_520_byte_limit_is_stated_for_stack_elements_so_it_covers_pushes_in_a_leaf() {
+    let tx = load_fixture("p2wpkh");
+
+    let migration = migrate(&tx, ParameterSet::MlDsa44).expect("valid transaction");
+
+    assert!(mentions(
+        &migration.assumptions,
+        &["520-byte stack element limit"]
+    ));
+}
+
+#[test]
 fn single_key_migrations_do_not_state_multisig_assumptions() {
     let tx = load_fixture("p2wpkh");
 
@@ -1002,6 +1289,7 @@ fn single_key_migrations_do_not_state_multisig_assumptions() {
 
     assert!(!mentions(&migration.assumptions, &["OP_CHECKMULTISIG"]));
     assert!(!mentions(&migration.assumptions, &["10,000-byte script"]));
+    assert!(!mentions(&migration.assumptions, &["Merkle root"]));
 }
 
 #[test]

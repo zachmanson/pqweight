@@ -1,0 +1,10 @@
+{
+    "description":  "Mainnet Taproot script-path spend of a dropped-tag leaf (<3-byte tag> OP_DROP <key> OP_CHECKSIG) as input 0, and a key-path spend as input 1, 2 outputs. Tx 9f31c58609e92c6ff4e566e2e4dcb3bfd5276161882bd181fcc8626869d5fe19, block 967209",
+    "oracle":  {
+                   "weight":  872,
+                   "vsize":  218,
+                   "size":  374
+               },
+    "core_version":  "Satoshi:31.1.0",
+    "recorded_by":  "bitcoin-tx -json (mainnet transaction added by hand)"
+}

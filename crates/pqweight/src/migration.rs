@@ -66,6 +66,11 @@ pub enum BaselineSpendType {
     /// Empty witness, scriptSig of pushes `[OP_0, m signatures, redeem script]`.
     /// Migrates to a witness-carried script with an empty scriptSig.
     P2shMultisig(MultisigThreshold),
+    /// Empty scriptSig, witness `[stack items, leaf, control block]` whose leaf
+    /// is a **Single-key leaf**. Migrates to a PQ key in the leaf, a PQ
+    /// signature in place of the Schnorr one, and a control block without the
+    /// internal key (see [`single_key_leaf_spend`]).
+    P2trScriptPathSingleKey,
 }
 
 impl BaselineSpendType {
@@ -87,7 +92,8 @@ impl BaselineSpendType {
             | Self::P2shP2wpkh
             | Self::P2pkh
             | Self::PayToAnchor
-            | Self::Coinbase => None,
+            | Self::Coinbase
+            | Self::P2trScriptPathSingleKey => None,
         }
     }
 }
@@ -124,7 +130,9 @@ pub enum InputResult {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum UnmappedReason {
     /// Empty scriptSig; after removing any annex, at least 2 witness items remain
-    /// and the last is a control block (33 + 32k bytes, tapscript leaf version).
+    /// and the last is a control block (33 + 32k bytes, tapscript leaf version),
+    /// but the spend is not a single-key leaf (multi-key leaves, an annex, and
+    /// other leaf shapes).
     P2trScriptPath,
     /// Empty scriptSig, a 64 or 65-byte Schnorr signature, then an annex.
     P2trKeyPathAnnex,
@@ -182,7 +190,7 @@ const RELAY_WEIGHT_LIMIT: u64 = 400_000;
 /// Assumptions every migration makes, regardless of parameter set.
 const BASE_ASSUMPTIONS: [&str; 3] = [
     "PQ outputs commit to a hash of the public key, as today's outputs do",
-    "the 520-byte witness item limit and sigop accounting are changed by a soft fork",
+    "the 520-byte stack element limit (witness items and pushes inside a script) and sigop accounting are changed by a soft fork",
     "outputs are unchanged by migration",
 ];
 
@@ -195,6 +203,10 @@ const MULTISIG_ASSUMPTIONS: [&str; 2] = [
 /// Assumption stated when any input is a legacy P2SH multisig spend.
 const P2SH_MULTISIG_ASSUMPTION: &str =
     "P2SH multisig spends migrate to a witness-carried script with an empty scriptSig";
+
+/// Assumption stated when any input is a P2TR script-path single-key spend
+/// (ticket 05, decision 1).
+const P2TR_SCRIPT_PATH_ASSUMPTION: &str = "migrated script-path outputs commit to the script tree's Merkle root directly (no internal key, no key path, as in BIP-360); the control block is the leaf-version byte plus the Merkle path";
 
 /// The assumptions that apply, in a fixed order: the base assumptions every
 /// migration states, then any specific to this parameter set, then any specific
@@ -217,6 +229,9 @@ fn assumptions(parameter_set: ParameterSet, inputs: &[InputResult]) -> Vec<&'sta
     }
     if spend_types().any(|spend_type| matches!(spend_type, BaselineSpendType::P2shMultisig(_))) {
         assumptions.push(P2SH_MULTISIG_ASSUMPTION);
+    }
+    if spend_types().any(|spend_type| spend_type == BaselineSpendType::P2trScriptPathSingleKey) {
+        assumptions.push(P2TR_SCRIPT_PATH_ASSUMPTION);
     }
     assumptions
 }
@@ -332,7 +347,8 @@ fn migrated_script_sig(spend_type: BaselineSpendType, original: &[u8]) -> &[u8] 
         | BaselineSpendType::P2pkh
         | BaselineSpendType::PayToAnchor
         | BaselineSpendType::P2wshMultisig(_)
-        | BaselineSpendType::P2shMultisig(_) => &[],
+        | BaselineSpendType::P2shMultisig(_)
+        | BaselineSpendType::P2trScriptPathSingleKey => &[],
         BaselineSpendType::P2shP2wpkh
         | BaselineSpendType::P2shP2wshMultisig(_)
         | BaselineSpendType::Coinbase => original,
@@ -360,6 +376,11 @@ fn migrated_witness_size(
         | BaselineSpendType::P2shP2wshMultisig(threshold)
         | BaselineSpendType::P2shMultisig(threshold) => {
             multisig_witness_size(threshold, parameter_set)
+        }
+        BaselineSpendType::P2trScriptPathSingleKey => {
+            single_key_leaf_spend(input.witness.as_deref().unwrap_or(&[]))
+                .expect("classified as a single-key leaf spend")
+                .migrated_witness_size(parameter_set)
         }
     }
 }
@@ -402,6 +423,9 @@ fn classify(input: &ParsedInput<'_>) -> Option<BaselineSpendType> {
     }
     if let Some(threshold) = multisig_threshold(witness, KeySizes::CompressedOnly) {
         return Some(BaselineSpendType::P2wshMultisig(threshold));
+    }
+    if single_key_leaf_spend(witness).is_some() {
+        return Some(BaselineSpendType::P2trScriptPathSingleKey);
     }
     if let [signature] = witness {
         // Schnorr signature, an optional trailing sighash byte. Anything with a
@@ -482,6 +506,153 @@ fn is_p2tr_script_path(witness: &[&[u8]]) -> bool {
     control_block.len() >= 33
         && (control_block.len() - 33).is_multiple_of(32)
         && control_block[0] & 0xfe == 0xc0
+}
+
+/// A P2TR script-path spend whose leaf is a **Single-key leaf**, with the parts
+/// its Migration template changes.
+struct SingleKeyLeafSpend<'a> {
+    /// The witness items the leaf runs on, one of them the signature.
+    stack: &'a [&'a [u8]],
+    leaf: &'a [u8],
+    merkle_path_hashes: usize,
+}
+
+impl SingleKeyLeafSpend<'_> {
+    /// Bytes of the migrated witness `[stack items, leaf, control block]`: the
+    /// signature becomes a PQ signature, the leaf's 32-byte key push becomes a
+    /// PQ key push, and the control block drops the internal key, keeping the
+    /// leaf-version byte and the Merkle path. Every other byte is unchanged.
+    fn migrated_witness_size(&self, parameter_set: ParameterSet) -> u64 {
+        let item = |len: u64| compact_size_len(len) + len;
+        let stack: u64 = self
+            .stack
+            .iter()
+            .map(|stack_item| {
+                if is_schnorr_signature(stack_item) {
+                    item(parameter_set.signature_size())
+                } else {
+                    item(stack_item.len() as u64)
+                }
+            })
+            .sum();
+        let public_key = parameter_set.public_key_size();
+        let leaf = self.leaf.len() as u64 - (1 + 32) + push_opcode_len(public_key) + public_key;
+        let control_block = 1 + 32 * self.merkle_path_hashes as u64;
+        let item_count = compact_size_len(self.stack.len() as u64 + 2);
+        item_count + stack + item(leaf) + item(control_block)
+    }
+}
+
+/// A 64-byte BIP-340 Schnorr signature, or 65 with a sighash byte.
+fn is_schnorr_signature(item: &[u8]) -> bool {
+    (64..=65).contains(&item.len())
+}
+
+/// `OP_CHECKSIG` and `OP_CHECKSIGVERIFY`.
+const OP_CHECKSIG: u8 = 0xac;
+const OP_CHECKSIGVERIFY: u8 = 0xad;
+
+/// Opcodes that check more than one key: `OP_CHECKMULTISIG`,
+/// `OP_CHECKMULTISIGVERIFY` (disabled in tapscript) and `OP_CHECKSIGADD`
+/// (`multi_a`).
+fn is_multi_key_check(opcode: u8) -> bool {
+    matches!(opcode, 0xae | 0xaf | 0xba)
+}
+
+/// BIP-342's `OP_SUCCESSx` opcodes: one anywhere in a leaf makes it succeed
+/// without running, so no signature is checked.
+fn is_op_success(opcode: u8) -> bool {
+    matches!(
+        opcode,
+        0x50 | 0x62 | 0x7e..=0x81 | 0x83..=0x86 | 0x89..=0x8a | 0x8d..=0x8e | 0x95..=0x99 | 0xbb..=0xfe
+    )
+}
+
+/// Reads `witness` as a script-path spend of a **Single-key leaf**: no annex, a
+/// tapscript control block, a leaf whose only signature check is one directly
+/// pushed 32-byte key (no multi-key check, no `OP_SUCCESSx`), and exactly one
+/// Schnorr-signature-sized stack item.
+fn single_key_leaf_spend<'a>(witness: &'a [&'a [u8]]) -> Option<SingleKeyLeafSpend<'a>> {
+    if without_annex(witness).len() != witness.len() || !is_p2tr_script_path(witness) {
+        return None;
+    }
+    let [stack @ .., leaf, control_block] = witness else {
+        return None;
+    };
+    let ops = read_leaf_ops(leaf)?;
+    let unsupported_opcode = ops.iter().any(|op| {
+        matches!(op, LeafOp::Opcode(opcode) if is_multi_key_check(*opcode) || is_op_success(*opcode))
+    });
+    if unsupported_opcode {
+        return None;
+    }
+    let mut checks = ops
+        .iter()
+        .enumerate()
+        .filter(|(_, op)| matches!(op, LeafOp::Opcode(OP_CHECKSIG | OP_CHECKSIGVERIFY)));
+    let (check_index, _) = checks.next()?;
+    let key_pushed_before_check = check_index > 0
+        && matches!(ops[check_index - 1], LeafOp::DirectPush(key) if key.len() == 32);
+    let one_signature = stack
+        .iter()
+        .filter(|stack_item| is_schnorr_signature(stack_item))
+        .count()
+        == 1;
+    (checks.next().is_none() && key_pushed_before_check && one_signature).then_some(
+        SingleKeyLeafSpend {
+            stack,
+            leaf,
+            merkle_path_hashes: (control_block.len() - 33) / 32,
+        },
+    )
+}
+
+/// One element of a tapscript leaf. Pushes are told apart by encoding because
+/// the template only swaps a key pushed directly.
+enum LeafOp<'a> {
+    /// A push with opcode 0x01 to 0x4b.
+    DirectPush(&'a [u8]),
+    /// A push with `OP_PUSHDATA1`, `OP_PUSHDATA2` or `OP_PUSHDATA4`.
+    PushData,
+    Opcode(u8),
+}
+
+/// Splits a leaf into ops, with every push form a leaf may use (inscription
+/// envelopes push data with `OP_PUSHDATA1` and `OP_PUSHDATA2`). Returns `None`
+/// for a push that runs past the end of the leaf.
+fn read_leaf_ops(leaf: &[u8]) -> Option<Vec<LeafOp<'_>>> {
+    let mut ops = Vec::new();
+    let mut rest = leaf;
+    while let Some((&opcode, tail)) = rest.split_first() {
+        let (op, tail) = match opcode {
+            0x01..=0x4b => {
+                let (push, tail) = tail.split_at_checked(usize::from(opcode))?;
+                (LeafOp::DirectPush(push), tail)
+            }
+            0x4c..=0x4e => {
+                let (len, tail) = match opcode {
+                    0x4c => {
+                        let (&len, tail) = tail.split_first()?;
+                        (usize::from(len), tail)
+                    }
+                    0x4d => {
+                        let (len, tail) = tail.split_first_chunk::<2>()?;
+                        (usize::from(u16::from_le_bytes(*len)), tail)
+                    }
+                    _ => {
+                        let (len, tail) = tail.split_first_chunk::<4>()?;
+                        (usize::try_from(u32::from_le_bytes(*len)).ok()?, tail)
+                    }
+                };
+                let (_, tail) = tail.split_at_checked(len)?;
+                (LeafOp::PushData, tail)
+            }
+            _ => (LeafOp::Opcode(opcode), tail),
+        };
+        ops.push(op);
+        rest = tail;
+    }
+    Some(ops)
 }
 
 /// A scriptSig of exactly a DER signature and a 33 or 65-byte public key.

@@ -52,8 +52,12 @@ A specific configuration of a Signature scheme with fixed signature and public k
 _Avoid_: Variant, level
 
 **Baseline spend type**:
-The kind of spend a real input performs today, such as P2WPKH or P2TR key-path. Each Migration template covers exactly one.
+The kind of spend a real input performs today, such as P2WPKH, P2TR key-path or P2TR script-path single-key. Each Migration template covers exactly one.
 _Avoid_: Script type, address type
+
+**Single-key leaf**:
+A tapscript leaf (version `0xc0`) whose only signature check is one 32-byte key pushed right before `OP_CHECKSIG` or `OP_CHECKSIGVERIFY`, spent with exactly one 64 or 65-byte stack item. Every other op and data push, such as an inscription envelope, is carried unchanged by its Migration template.
+_Avoid_: inscription leaf, pk leaf
 
 **Multisig threshold**:
 The m-of-n shape of a multisig spend: n public keys in its script, m signatures in its witness. It is part of the Baseline spend type, so a 2-of-3 and a 3-of-5 P2WSH multisig spend migrate to different Migration templates.

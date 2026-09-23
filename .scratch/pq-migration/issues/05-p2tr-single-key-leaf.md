@@ -1,4 +1,4 @@
-Status: ready-for-agent
+Status: done
 
 # P2TR script-path template for single-key leaves (slice 5)
 
@@ -54,6 +54,12 @@ A new Baseline spend type, **P2TR script-path single-key**, with a literal-swap 
 1. `cargo fmt --all --check`, `cargo clippy --workspace --all-targets -- -D warnings` and `cargo test --workspace` are clean.
 2. Re-running `pqweight aggregate` on the sample maps about 209 of the 211 P2TR script-path inputs. Add a dated section to the coverage report with the new coverage and migrated totals. It should say that inscription data dominates these inputs' weight, so their migrated-to-baseline ratio is much lower than for payments, and that inscription volume is bursty (160 of the 189 are in one block). If the size rule (decision 4) leaves out inputs that had a second 64 or 65-byte data item, report how many.
 3. The doc edits above are made.
+
+## Implementation notes (2026-09-23)
+
+- **Real-byte fixtures come from mainnet, not regtest.** Core's wallet signs tapscript leaves only when it can parse them as miniscript, and an inscription envelope or dropped-tag leaf isn't miniscript, so `record-fixtures.ps1` can't produce them. `p2tr-scriptpath-envelope` and `p2tr-scriptpath-dropped-tag` are mainnet transactions from the sample (txids in their `.json`), with oracle values from Core's `bitcoin-tx -json`. They pass the same three-way check as every other Fixture.
+- **One guard beyond decision 3:** a leaf containing any BIP-342 `OP_SUCCESSx` opcode is Unmapped. Such a leaf succeeds without running, so its "signature" is never checked and it isn't really single-key. None occurred in the sample.
+- Acceptance run: 209 of 211 mapped; the 2 left are the two-key leaves. The size rule turned away no inputs. Results are in the coverage report's "After slice 5" section.
 
 ## Out of Scope
 

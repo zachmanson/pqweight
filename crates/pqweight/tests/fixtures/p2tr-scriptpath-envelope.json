@@ -1,0 +1,10 @@
+{
+    "description":  "Mainnet inscription: Taproot script-path spend of an ord envelope leaf (<key> CHECKSIG OP_FALSE OP_IF \"ord\" ... OP_ENDIF), no Merkle path, 1 input, 1 output. Tx db63ceed3e6d36285550fdccce9a875824005c87abbd9b91ded618eba19e1a35, block 968211",
+    "oracle":  {
+                   "weight":  562,
+                   "vsize":  141,
+                   "size":  280
+               },
+    "core_version":  "Satoshi:31.1.0",
+    "recorded_by":  "bitcoin-tx -json (mainnet transaction added by hand)"
+}

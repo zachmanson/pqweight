@@ -25,7 +25,7 @@ A library function `migrate(bytes, ParameterSet)` returns an **Input result** fo
 - A total exists only when every input is mapped. Per-input results are always reported. Revisit once aggregation can measure how often Unmapped occurs.
 - Fee = fee rate x vsize. `--fee-rate` is sat/vB and may be fractional. Fee is rounded up to whole satoshis. Use exact arithmetic, and reject negative or non-numeric rates. Report baseline fee, PQ fee, absolute difference and ratio.
 - The 400,000-weight relay limit is checked on the migrated total and reported as policy, not consensus (ADR-0002).
-- Human output prints an Assumptions block and JSON has an `assumptions` array. Assumptions include: PQ outputs commit to a hash of the pubkey, the 520-byte witness item limit and sigop accounting are changed by a soft fork, outputs are unchanged.
+- Human output prints an Assumptions block and JSON has an `assumptions` array. Assumptions include: PQ outputs commit to a hash of the pubkey, the 520-byte stack element limit (witness items and pushes inside a script) and sigop accounting are changed by a soft fork, outputs are unchanged.
 - Multisig inputs (slice 3) add assumptions: script size and witnessScript standardness limits are raised by a soft fork, PQ multisig keeps the `OP_CHECKMULTISIG` layout with its dummy and every public key in the script, and P2SH spends migrate to a witness-carried script. See `issues/02-multisig-templates.md`.
 - No consensus validation, as in the weight-computation spec.
 
@@ -35,7 +35,7 @@ A library function `migrate(bytes, ParameterSet)` returns an **Input result** fo
 |---|---|
 | P2PK | Later, cheap. Mostly early coins, highly exposed to Long-exposure attack |
 | P2WSH / P2SH multisig, P2SH-P2WSH | Slice 3: literal-swap `CHECKMULTISIG` template, see `issues/02-multisig-templates.md` |
-| P2TR script-path | Later, own slice: control block, Merkle path and empty items for non-signers need design (`multi_a` included) |
+| P2TR script-path | Slice 5: single-key leaves (one key, one `CHECKSIG`/`CHECKSIGVERIFY`), literal-swap template with a BIP-360-style control block, see `issues/05-p2tr-single-key-leaf.md`. `multi_a` and other multi-key leaves later |
 | Custom-script P2WSH / P2SH (Lightning, timelocks) | Probably stays Unmapped |
 | Bare multisig | Stays Unmapped for now, rare |
 | OP_RETURN | No inputs, no template |

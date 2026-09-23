@@ -340,8 +340,25 @@ fn aggregate_command_records_a_bad_line_without_aborting_the_batch() {
 }
 
 #[test]
-fn migrate_command_names_the_unmapped_reason_of_an_unmapped_input() {
+fn migrate_command_names_a_p2tr_single_key_leaf_input_and_states_its_output_assumption() {
     let fx = fixture("p2tr-scriptpath");
+
+    let output = run(&["migrate", "--scheme", "ml-dsa-44", &fx.hex], None);
+
+    assert!(output.status.success(), "{}", stderr(&output));
+    let text = stdout(&output);
+    // Template weight hand-derived in pqweight::tests::migrate::
+    // p2tr_single_key_leaf_is_migrated_with_the_pq_key_in_the_leaf_and_no_internal_key.
+    assert!(
+        text.contains("input 0: mapped (P2TR script-path single-key), weight: 3909"),
+        "{text}"
+    );
+    assert!(text.contains("Merkle root directly"), "{text}");
+}
+
+#[test]
+fn migrate_command_names_the_unmapped_reason_of_an_unmapped_input() {
+    let fx = fixture("p2tr-keypath-annex");
 
     let human = run(&["migrate", "--scheme", "ml-dsa-44", &fx.hex], None);
     let json = run(
@@ -350,13 +367,13 @@ fn migrate_command_names_the_unmapped_reason_of_an_unmapped_input() {
     );
 
     assert!(
-        stdout(&human).contains("input 0: unmapped (P2TR script-path)"),
+        stdout(&human).contains("input 0: unmapped (P2TR key-path with annex)"),
         "{}",
         stdout(&human)
     );
     let parsed: serde_json::Value = serde_json::from_str(&stdout(&json)).unwrap();
     assert_eq!(parsed["inputs"][0]["status"], "unmapped");
-    assert_eq!(parsed["inputs"][0]["reason"], "P2TR script-path");
+    assert_eq!(parsed["inputs"][0]["reason"], "P2TR key-path with annex");
 }
 
 /// The whitespace-separated columns after `label` on the line that starts with
@@ -374,11 +391,11 @@ fn row_after<'a>(text: &'a str, label: &str) -> Vec<&'a str> {
 #[test]
 fn aggregate_command_prints_a_breakdown_by_spend_type_and_unmapped_reason() {
     let p2wpkh = p2wpkh_fixture();
-    let script_path = fixture("p2tr-scriptpath");
+    let key_path_annex = fixture("p2tr-keypath-annex");
     let path = scratch_file("breakdown");
     std::fs::write(
         &path,
-        format!("{}\n{}\n{}\n", p2wpkh.hex, script_path.hex, p2wpkh.hex),
+        format!("{}\n{}\n{}\n", p2wpkh.hex, key_path_annex.hex, p2wpkh.hex),
     )
     .unwrap();
 
@@ -391,20 +408,21 @@ fn aggregate_command_prints_a_breakdown_by_spend_type_and_unmapped_reason() {
     assert!(output.status.success(), "{}", stderr(&output));
     let text = stdout(&output);
     // Input weights from the library's breakdown test: P2WPKH 270 each (template
-    // 3903 each), P2TR script-path 299. 540 / 839 = 64.4%, 299 / 839 = 35.6%.
+    // 3903 each), P2TR key-path with annex 234. 540 / 774 = 69.8%,
+    // 234 / 774 = 30.2%.
     // Columns: inputs, % of inputs, baseline Input weight, % of it, migrated.
     assert_eq!(
         row_after(&text, "P2WPKH"),
-        ["2", "66.7%", "540", "64.4%", "7806"]
+        ["2", "66.7%", "540", "69.8%", "7806"]
     );
     assert_eq!(
-        row_after(&text, "P2TR script-path"),
-        ["1", "33.3%", "299", "35.6%", "-"]
+        row_after(&text, "P2TR key-path with annex"),
+        ["1", "33.3%", "234", "30.2%", "-"]
     );
-    // The partially mapped transaction's Oracle weight, 465 of 436 + 465 + 436
-    // = 1337 baseline weight, is 34.8%.
+    // The partially mapped transaction's Oracle weight, 400 of 436 + 400 + 436
+    // = 1272 baseline weight, is 31.4%.
     assert!(
-        text.contains("partially mapped baseline weight: 465 (34.8% of baseline)"),
+        text.contains("partially mapped baseline weight: 400 (31.4% of baseline)"),
         "{text}"
     );
 }
