@@ -26,6 +26,7 @@ A library function `migrate(bytes, ParameterSet)` returns an **Input result** fo
 - Fee = fee rate x vsize. `--fee-rate` is sat/vB and may be fractional. Fee is rounded up to whole satoshis. Use exact arithmetic, and reject negative or non-numeric rates. Report baseline fee, PQ fee, absolute difference and ratio.
 - The 400,000-weight relay limit is checked on the migrated total and reported as policy, not consensus (ADR-0002).
 - Human output prints an Assumptions block and JSON has an `assumptions` array. Assumptions include: PQ outputs commit to a hash of the pubkey, the 520-byte witness item limit and sigop accounting are changed by a soft fork, outputs are unchanged.
+- Multisig inputs (slice 3) add assumptions: script size and witnessScript standardness limits are raised by a soft fork, PQ multisig keeps the `OP_CHECKMULTISIG` layout with its dummy and every public key in the script, and P2SH spends migrate to a witness-carried script. See `issues/02-multisig-templates.md`.
 - No consensus validation, as in the weight-computation spec.
 
 ## Other Baseline spend types (not in slice 1)
@@ -33,10 +34,10 @@ A library function `migrate(bytes, ParameterSet)` returns an **Input result** fo
 | Type | Plan |
 |---|---|
 | P2PK | Later, cheap. Mostly early coins, highly exposed to Long-exposure attack |
-| P2WSH / P2SH multisig, P2SH-P2WSH | Later, needs a stated design for N pubkeys and M signatures |
-| P2TR script-path | Later, needs design, script decides the signature count |
+| P2WSH / P2SH multisig, P2SH-P2WSH | Slice 3: literal-swap `CHECKMULTISIG` template, see `issues/02-multisig-templates.md` |
+| P2TR script-path | Later, own slice: control block, Merkle path and empty items for non-signers need design (`multi_a` included) |
 | Custom-script P2WSH / P2SH (Lightning, timelocks) | Probably stays Unmapped |
-| Bare multisig | Later, rare |
+| Bare multisig | Stays Unmapped for now, rare |
 | OP_RETURN | No inputs, no template |
 
 ## Testing Decisions

@@ -48,6 +48,10 @@ _Avoid_: Variant, level
 The kind of spend a real input performs today, such as P2WPKH or P2TR key-path. Each Migration template covers exactly one.
 _Avoid_: Script type, address type
 
+**Multisig threshold**:
+The m-of-n shape of a multisig spend: n public keys in its script, m signatures in its witness. It is part of the Baseline spend type, so a 2-of-3 and a 3-of-5 P2WSH multisig spend migrate to different Migration templates.
+_Avoid_: Quorum, k-of-n, "multisig" alone as a spend type name
+
 **Input result**:
 The outcome for one input of a transaction: either its Migration template weight, or Unmapped. A transaction has a migrated total only when every input is mapped.
 
