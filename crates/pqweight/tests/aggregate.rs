@@ -6,7 +6,7 @@
 
 mod common;
 
-use common::fixtures_dir;
+use common::{der_signature, fixtures_dir};
 use pqweight::{
     BaselineSpendType, BreakdownKind, BreakdownRow, FeeRate, ParameterSet, UnmappedReason,
     aggregate,
@@ -113,7 +113,7 @@ fn an_unmapped_input_counts_toward_baseline_but_is_excluded_from_the_migrated_to
     // bytes. Witness: item count 1 + sig (1 + 72) + pubkey (1 + 33) + extra
     // (1 + 1) = 110 bytes. total_size = 60 + 2 (marker/flag) + 110 = 172.
     // weight = 3*60 + 172 = 352, vsize = ceil(352/4) = 88.
-    let signature = [0u8; 72];
+    let signature = der_signature(72);
     let pubkey = [0u8; 33];
     let extra = [0u8; 1];
     let unmapped_tx = segwit_tx(&[], &[&signature, &pubkey, &extra]);
@@ -137,7 +137,7 @@ fn an_unmapped_input_counts_toward_baseline_but_is_excluded_from_the_migrated_to
 
 #[test]
 fn when_every_transaction_has_an_unmapped_input_the_migrated_total_is_none() {
-    let signature = [0u8; 72];
+    let signature = der_signature(72);
     let pubkey = [0u8; 33];
     let extra = [0u8; 1];
     let unmapped_tx = segwit_tx(&[], &[&signature, &pubkey, &extra]);

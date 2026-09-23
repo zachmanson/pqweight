@@ -6,7 +6,7 @@
 
 mod common;
 
-use common::{decode_hex, fixtures_dir};
+use common::{decode_hex, der_signature, fixtures_dir};
 use pqweight::{
     BaselineSpendType, InputResult, MultisigThreshold, ParameterSet, UnmappedReason, migrate,
     transaction_weight,
@@ -113,7 +113,7 @@ fn p2sh_p2wsh_redeem_script_push() -> Vec<u8> {
 /// 33-byte keys and 72-byte signatures.
 fn multisig_witness_tx(script_sig: &[u8], m: u8, n: u8) -> Vec<u8> {
     let key = [2u8; 33];
-    let signature = [0u8; 72];
+    let signature = der_signature(72);
     let script = multisig_script(&op_n(m), &vec![&key[..]; usize::from(n)], &op_n(n));
     let mut witness: Vec<&[u8]> = vec![&[]];
     witness.extend(vec![&signature[..]; usize::from(m)]);
@@ -292,7 +292,7 @@ fn p2sh_p2wsh_single_key_script_spend_is_unmapped_as_p2sh_wrapped_segwit_non_mul
 fn p2sh_p2wpkh_shape_with_an_uncompressed_key_is_unmapped_as_p2sh_wrapped_segwit() {
     let mut redeem_script_push = vec![0x16, 0x00, 0x14];
     redeem_script_push.extend_from_slice(&[0u8; 20]);
-    let tx = segwit_tx(&redeem_script_push, &[&[0u8; 72], &[4u8; 65]]);
+    let tx = segwit_tx(&redeem_script_push, &[&der_signature(72), &[4u8; 65]]);
 
     assert_eq!(
         unmapped_reason(&tx),
@@ -310,8 +310,7 @@ fn p2sh_single_key_script_spend_is_unmapped_as_p2sh_non_multisig() {
 
 #[test]
 fn legacy_script_sigs_ending_in_a_signature_or_key_are_unmapped_as_legacy_other() {
-    let mut signature = [0u8; 72];
-    signature[0] = 0x30; // DER sequence tag
+    let signature = der_signature(72);
     let mut uncompressed_key = [0u8; 65];
     uncompressed_key[0] = 0x04;
 
@@ -346,7 +345,7 @@ fn shapes_matching_no_reason_are_unmapped_as_unknown() {
     let cases = [
         (
             "non-P2SH scriptSig alongside a witness",
-            segwit_tx(&[0x01, 0x51], &[&[0u8; 72], &[2u8; 33]]),
+            segwit_tx(&[0x01, 0x51], &[&der_signature(72), &[2u8; 33]]),
         ),
         ("one short witness item", segwit_tx(&[], &[&[0u8; 10]])),
     ];
@@ -373,13 +372,23 @@ fn input_weight_counts_non_witness_bytes_at_4_wu_and_witness_bytes_at_1_wu() {
 }
 
 #[test]
-fn p2wpkh_accepts_der_signatures_of_70_to_73_bytes_and_rejects_others() {
+fn p2wpkh_accepts_der_signatures_of_9_to_73_bytes_and_rejects_others() {
     let pubkey = [0u8; 33];
-    // (signature length, expected to be recognized as P2WPKH)
-    let cases = [(69, false), (70, true), (73, true), (74, false)];
+    // (signature length, expected to be recognized as P2WPKH). 68 and 69 bytes
+    // are real: DER drops leading zero bytes of r and s, and the September 2026
+    // coverage sample had 26 such P2WPKH spends.
+    let cases = [
+        (8, false),
+        (9, true),
+        (68, true),
+        (69, true),
+        (70, true),
+        (73, true),
+        (74, false),
+    ];
 
     for (sig_len, mapped) in cases {
-        let signature = vec![0u8; sig_len];
+        let signature = der_signature(sig_len);
         let tx = segwit_tx(&[], &[&signature, &pubkey]);
 
         assert_eq!(
@@ -391,8 +400,16 @@ fn p2wpkh_accepts_der_signatures_of_70_to_73_bytes_and_rejects_others() {
 }
 
 #[test]
+fn p2wpkh_signature_must_start_with_the_der_sequence_tag() {
+    let not_der = [0u8; 72];
+    let tx = segwit_tx(&[], &[&not_der, &[0u8; 33]]);
+
+    assert!(!is_mapped_as(&tx, BaselineSpendType::P2wpkh));
+}
+
+#[test]
 fn p2wpkh_requires_a_33_byte_public_key() {
-    let signature = [0u8; 72];
+    let signature = der_signature(72);
 
     for pubkey_len in [32, 34, 65] {
         let pubkey = vec![0u8; pubkey_len];
@@ -407,7 +424,7 @@ fn p2wpkh_requires_a_33_byte_public_key() {
 
 #[test]
 fn p2wpkh_shape_with_an_extra_witness_item_or_a_script_sig_is_unmapped() {
-    let signature = [0u8; 72];
+    let signature = der_signature(72);
     let pubkey = [0u8; 33];
 
     let extra_item = segwit_tx(&[], &[&signature, &pubkey, &[1u8]]);
@@ -453,7 +470,7 @@ fn p2tr_key_path_with_an_annex_is_unmapped() {
 
 #[test]
 fn p2sh_p2wpkh_requires_the_0014_redeem_script_push_and_a_p2wpkh_witness() {
-    let signature = [0u8; 72];
+    let signature = der_signature(72);
     let pubkey = [0u8; 33];
     let mut redeem_script_push = vec![0x16, 0x00, 0x14];
     redeem_script_push.extend_from_slice(&[0u8; 20]);
@@ -477,6 +494,15 @@ fn p2sh_p2wpkh_requires_the_0014_redeem_script_push_and_a_p2wpkh_witness() {
 }
 
 #[test]
+fn p2sh_p2wpkh_accepts_a_short_der_signature() {
+    let mut redeem_script_push = vec![0x16, 0x00, 0x14];
+    redeem_script_push.extend_from_slice(&[0u8; 20]);
+    let tx = segwit_tx(&redeem_script_push, &[&der_signature(69), &[0u8; 33]]);
+
+    assert!(is_mapped_as(&tx, BaselineSpendType::P2shP2wpkh));
+}
+
+#[test]
 fn p2sh_p2wpkh_input_is_migrated_keeping_the_redeem_script_scriptsig() {
     let tx = load_fixture("p2sh-p2wpkh");
 
@@ -497,7 +523,7 @@ fn p2sh_p2wpkh_input_is_migrated_keeping_the_redeem_script_scriptsig() {
 #[test]
 fn p2pkh_accepts_a_der_signature_and_a_33_or_65_byte_pubkey() {
     for pubkey_len in [33, 65] {
-        let signature = [0u8; 72];
+        let signature = der_signature(72);
         let pubkey = vec![0u8; pubkey_len];
         let tx = legacy_tx(&[&signature, &pubkey]);
 
@@ -509,8 +535,18 @@ fn p2pkh_accepts_a_der_signature_and_a_33_or_65_byte_pubkey() {
 }
 
 #[test]
+fn p2pkh_accepts_a_short_der_signature_and_rejects_a_non_der_one() {
+    let pubkey = [0u8; 33];
+    let short = legacy_tx(&[&der_signature(69), &pubkey]);
+    let not_der = legacy_tx(&[&[0u8; 72], &pubkey]);
+
+    assert!(is_mapped_as(&short, BaselineSpendType::P2pkh));
+    assert!(!is_mapped_as(&not_der, BaselineSpendType::P2pkh));
+}
+
+#[test]
 fn p2pkh_near_misses_are_unmapped() {
-    let signature = [0u8; 72];
+    let signature = der_signature(72);
     let pubkey = [0u8; 33];
 
     // Wrong pubkey length, one push short of the pair, and an extra third push.
@@ -671,11 +707,11 @@ fn p2wsh_multisig_above_16_keys_keeps_its_2_byte_number_push() {
 #[test]
 fn p2wsh_multisig_numbers_must_be_minimally_encoded_and_at_most_20() {
     let key = [2u8; 33];
-    let signature = [0u8; 72];
+    let signature = der_signature(72);
     let sigs_and_script = |m: &[u8], n_keys: usize, n: &[u8], n_sigs: usize| {
         let script = multisig_script(m, &vec![&key[..]; n_keys], n);
         let mut witness: Vec<Vec<u8>> = vec![vec![]];
-        witness.extend(vec![signature.to_vec(); n_sigs]);
+        witness.extend(vec![signature.clone(); n_sigs]);
         witness.push(script);
         witness
     };
@@ -701,10 +737,22 @@ fn p2wsh_multisig_numbers_must_be_minimally_encoded_and_at_most_20() {
 }
 
 #[test]
+fn p2wsh_multisig_accepts_a_short_der_signature() {
+    let key = [2u8; 33];
+    let script = multisig_script(&op_n(2), &[&key, &key, &key], &op_n(3));
+    let tx = segwit_tx(&[], &[&[], &der_signature(72), &der_signature(69), &script]);
+
+    assert!(is_mapped_as(
+        &tx,
+        BaselineSpendType::P2wshMultisig(MultisigThreshold { m: 2, n: 3 })
+    ));
+}
+
+#[test]
 fn p2wsh_multisig_near_misses_are_unmapped() {
     let key = [2u8; 33];
     let keys: &[&[u8]] = &[&key, &key, &key];
-    let signature = [0u8; 72];
+    let signature = der_signature(72);
     let script_2_of_3 = multisig_script(&op_n(2), keys, &op_n(3));
 
     let too_few_signatures = segwit_tx(&[], &[&[], &signature, &script_2_of_3]);
@@ -714,7 +762,7 @@ fn p2wsh_multisig_near_misses_are_unmapped() {
     );
     let non_empty_dummy = segwit_tx(&[], &[&[0u8], &signature, &signature, &script_2_of_3]);
     let empty_signature = segwit_tx(&[], &[&[], &signature, &[], &script_2_of_3]);
-    let short_signature = segwit_tx(&[], &[&[], &signature, &[0u8; 69], &script_2_of_3]);
+    let short_signature = segwit_tx(&[], &[&[], &signature, &der_signature(8), &script_2_of_3]);
     let extra_opcode = {
         let mut script = script_2_of_3.clone();
         script.push(0x75); // OP_DROP after OP_CHECKMULTISIG
@@ -757,7 +805,7 @@ fn p2wsh_multisig_near_misses_are_unmapped() {
         ("too many signatures", too_many_signatures),
         ("non-empty dummy", non_empty_dummy),
         ("0-byte signature", empty_signature),
-        ("69-byte signature", short_signature),
+        ("8-byte signature", short_signature),
         ("extra opcode", extra_opcode),
         ("m > n", m_greater_than_n),
         ("n does not match key count", n_does_not_match_key_count),
@@ -856,7 +904,7 @@ fn p2sh_multisig_moves_signatures_and_script_into_the_witness() {
 fn p2sh_multisig_accepts_uncompressed_and_mixed_key_sizes() {
     let compressed = [2u8; 33];
     let uncompressed = [4u8; 65];
-    let signature = [0u8; 72];
+    let signature = der_signature(72);
     let script = multisig_script(&op_n(1), &[&compressed, &uncompressed], &op_n(2));
     let tx = legacy_tx_with_script_sig(&p2sh_multisig_script_sig(&[&signature], &script));
 
@@ -869,7 +917,7 @@ fn p2sh_multisig_accepts_uncompressed_and_mixed_key_sizes() {
 #[test]
 fn p2sh_multisig_near_misses_are_unmapped() {
     let key = [2u8; 33];
-    let signature = [0u8; 72];
+    let signature = der_signature(72);
     let script = multisig_script(&op_n(2), &[&key, &key, &key], &op_n(3));
     let valid = p2sh_multisig_script_sig(&[&signature, &signature], &script);
 
@@ -937,7 +985,7 @@ fn multisig_inputs_state_the_script_limit_and_checkmultisig_layout_assumptions()
 #[test]
 fn p2sh_multisig_inputs_state_that_the_script_moves_into_the_witness() {
     let key = [2u8; 33];
-    let signature = [0u8; 72];
+    let signature = der_signature(72);
     let script = multisig_script(&op_n(1), &[&key], &op_n(1));
     let tx = legacy_tx_with_script_sig(&p2sh_multisig_script_sig(&[&signature], &script));
 
@@ -960,7 +1008,7 @@ fn single_key_migrations_do_not_state_multisig_assumptions() {
 fn pay_to_anchor_is_a_no_op_not_unmapped() {
     // Second input carries the only non-empty witness in the transaction, so the
     // segwit marker is legal (a transaction can't have every witness empty).
-    let signature = [0u8; 72];
+    let signature = der_signature(72);
     let pubkey = [0u8; 33];
     let tx = segwit_tx_with_inputs(&[(&[], &[]), (&[], &[&signature, &pubkey])]);
 
@@ -1030,7 +1078,7 @@ fn null_outpoint_near_misses_are_not_coinbase() {
     let wrong_txid = with_first_outpoint(legacy_tx_with_script_sig(&script_sig), txid, 0xffff_ffff);
     // A null outpoint on one input of a two-input transaction: a coinbase has
     // exactly one input.
-    let signature = [0u8; 72];
+    let signature = der_signature(72);
     let pubkey = [0u8; 33];
     let two_inputs = with_first_outpoint(
         segwit_tx_with_inputs(&[(&script_sig, &[]), (&[], &[&signature, &pubkey])]),
@@ -1062,7 +1110,7 @@ fn legacy_form_empty_spend_is_pay_to_anchor_and_stays_legacy() {
 fn anchor_spend_gains_an_empty_witness_when_another_input_makes_the_migrated_transaction_segwit() {
     // Legacy transaction: an anchor spend (empty scriptSig), then a P2PKH spend.
     let mut p2pkh_script_sig = vec![72];
-    p2pkh_script_sig.extend_from_slice(&[0u8; 72]);
+    p2pkh_script_sig.extend_from_slice(&der_signature(72));
     p2pkh_script_sig.push(33);
     p2pkh_script_sig.extend_from_slice(&[2u8; 33]);
     let mut tx = Vec::new();
@@ -1158,7 +1206,7 @@ fn a_migrated_total_over_400_000_weight_exceeds_the_relay_limit() {
     // Each P2WPKH input migrated to SLH-DSA-128s (8057 WU template weight, see
     // p2wpkh_input_is_migrated_to_an_slh_dsa_128s_witness) costs 8057 WU; 50 of
     // them push the transaction's migrated weight past 400,000 WU.
-    let signature = [0u8; 72];
+    let signature = der_signature(72);
     let pubkey = [0u8; 33];
     let witness: &[&[u8]] = &[&signature, &pubkey];
     let inputs = vec![(&[][..], witness); 50];
@@ -1173,7 +1221,7 @@ fn a_migrated_total_over_400_000_weight_exceeds_the_relay_limit() {
 
 #[test]
 fn a_transaction_with_one_unmapped_input_has_no_migrated_total() {
-    let signature = [0u8; 72];
+    let signature = der_signature(72);
     let pubkey = [0u8; 33];
     // First input is a clean P2WPKH match; second has an extra witness item,
     // so its shape matches nothing in slice 1.
@@ -1264,7 +1312,7 @@ fn compact_size_weight(value: u64) -> u64 {
 fn mapped_tx_with_removable_weight() -> impl Strategy<Value = (Vec<u8>, u64)> {
     let native_segwit_strategy =
         (70u8..=73, prop::sample::select(vec![33u8])).prop_map(|(sig_len, pk_len)| {
-            let signature = vec![0u8; sig_len as usize];
+            let signature = der_signature(sig_len as usize);
             let pubkey = vec![0u8; pk_len as usize];
             let tx = segwit_tx(&[], &[&signature, &pubkey]);
             // Witness: item count + each item's compact size and bytes, all 1 WU/byte.
@@ -1286,7 +1334,7 @@ fn mapped_tx_with_removable_weight() -> impl Strategy<Value = (Vec<u8>, u64)> {
 
     let wrapped_segwit_strategy =
         (70u8..=73, prop::sample::select(vec![33u8])).prop_map(|(sig_len, pk_len)| {
-            let signature = vec![0u8; sig_len as usize];
+            let signature = der_signature(sig_len as usize);
             let pubkey = vec![0u8; pk_len as usize];
             let mut redeem_script_push = vec![0x16, 0x00, 0x14];
             redeem_script_push.extend_from_slice(&[0u8; 20]);
@@ -1302,7 +1350,7 @@ fn mapped_tx_with_removable_weight() -> impl Strategy<Value = (Vec<u8>, u64)> {
 
     let legacy_strategy =
         (70u8..=73, prop::sample::select(vec![33u8, 65u8])).prop_map(|(sig_len, pk_len)| {
-            let signature = vec![0u8; sig_len as usize];
+            let signature = der_signature(sig_len as usize);
             let pubkey = vec![0u8; pk_len as usize];
             let tx = legacy_tx(&[&signature, &pubkey]);
             // scriptSig: a 1-byte direct-push opcode plus the bytes, for each
@@ -1337,7 +1385,7 @@ fn mapped_tx_with_removable_weight() -> impl Strategy<Value = (Vec<u8>, u64)> {
     let p2sh_multisig_strategy = (1u8..=7, 0u8..7).prop_map(|(n, m_offset)| {
         let m = 1 + m_offset % n;
         let key = [2u8; 33];
-        let signature = [0u8; 72];
+        let signature = der_signature(72);
         let script = multisig_script(&op_n(m), &vec![&key[..]; usize::from(n)], &op_n(n));
         let script_sig = p2sh_multisig_script_sig(&vec![&signature[..]; usize::from(m)], &script);
         let script_sig_len = script_sig.len() as u64;

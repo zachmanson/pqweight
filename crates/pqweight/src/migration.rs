@@ -452,7 +452,7 @@ fn unmapped_reason(input: &ParsedInput<'_>) -> UnmappedReason {
 /// read as some opcodes, so what rules a push out is looking like the other
 /// things a legacy scriptSig ends with: a DER signature or a public key.
 fn is_redeem_script_candidate(push: &[u8]) -> bool {
-    let looks_like_signature = push.first() == Some(&0x30) && (9..=73).contains(&push.len());
+    let looks_like_signature = looks_like_der_signature(push);
     let looks_like_public_key = matches!(
         (push.len(), push.first()),
         (33, Some(0x02 | 0x03)) | (65, Some(0x04))
@@ -487,7 +487,7 @@ fn is_p2tr_script_path(witness: &[&[u8]]) -> bool {
 /// A scriptSig of exactly a DER signature and a 33 or 65-byte public key.
 fn is_der_signature_and_legacy_pubkey(pushes: &[&[u8]]) -> bool {
     matches!(pushes, [signature, pubkey]
-        if (70..=73).contains(&signature.len()) && matches!(pubkey.len(), 33 | 65))
+        if looks_like_der_signature(signature) && matches!(pubkey.len(), 33 | 65))
 }
 
 /// Reads `script_sig` as a sequence of direct data pushes (opcodes 0x01 to 0x4b,
@@ -508,11 +508,18 @@ fn read_direct_pushes(script_sig: &[u8]) -> Option<Vec<&[u8]>> {
     Some(pushes)
 }
 
-/// A witness of exactly a DER signature (70 to 73 bytes, sighash byte included)
+/// A witness of exactly a DER signature (see [`looks_like_der_signature`])
 /// and a 33-byte compressed public key. Lengths only; nothing is verified.
 fn is_der_signature_and_compressed_pubkey(witness: &[&[u8]]) -> bool {
     matches!(witness, [signature, pubkey]
-        if (70..=73).contains(&signature.len()) && pubkey.len() == 33)
+        if looks_like_der_signature(signature) && pubkey.len() == 33)
+}
+
+/// The DER sequence tag `0x30` and 9 to 73 bytes, sighash byte included. DER
+/// drops leading zero bytes of `r` and `s`, so real signatures can be shorter
+/// than the usual 71 or 72 bytes.
+fn looks_like_der_signature(item: &[u8]) -> bool {
+    item.first() == Some(&0x30) && (9..=73).contains(&item.len())
 }
 
 /// A scriptSig that is a single push of exactly `0014<20-byte hash>` (22 bytes):
@@ -547,8 +554,8 @@ impl KeySizes {
 }
 
 /// The threshold of a spend whose stack items are `[dummy, m signatures, script]`,
-/// where the dummy is empty, each signature is 70 to 73 bytes (DER plus sighash
-/// byte) and the script is exactly `OP_m <n keys> OP_n OP_CHECKMULTISIG` with
+/// where the dummy is empty, each signature looks like DER (see [`looks_like_der_signature`])
+/// and the script is exactly `OP_m <n keys> OP_n OP_CHECKMULTISIG` with
 /// keys of `key_sizes`. Lengths and structure only; nothing is verified.
 fn multisig_threshold(items: &[&[u8]], key_sizes: KeySizes) -> Option<MultisigThreshold> {
     let [dummy, signatures @ .., script] = items else {
@@ -556,7 +563,7 @@ fn multisig_threshold(items: &[&[u8]], key_sizes: KeySizes) -> Option<MultisigTh
     };
     let threshold = parse_multisig_script(script, key_sizes)?;
     let signatures_match = signatures.len() == usize::from(threshold.m)
-        && signatures.iter().all(|s| (70..=73).contains(&s.len()));
+        && signatures.iter().all(|s| looks_like_der_signature(s));
     (dummy.is_empty() && signatures_match).then_some(threshold)
 }
 

@@ -1,4 +1,4 @@
-Status: ready-for-agent
+Status: done
 
 # Accept short DER signatures in the ECDSA templates
 
@@ -35,3 +35,9 @@ Widen the signature length check in all four places to match the shape already u
 
 - Checking full DER structure (`r` and `s` lengths, leading-zero rules). Length and first byte are enough to separate a signature from a key or a script.
 - Any new template.
+
+## Comments
+
+Implemented test-first through `migrate()`. One `looks_like_der_signature` helper (`0x30`, 9 to 73 bytes) now backs the P2WPKH, P2SH-P2WPKH, P2PKH and multisig checks and the P2SH non-multisig heuristic. Tests got a `der_signature(len)` helper in `tests/common`, since the old all-zero filler signatures don't start with `0x30`. The multisig near miss that used a 69-byte filler now uses an 8-byte one, because 69 bytes is valid under the new rule. The P2SH-P2WPKH test passed as soon as it was written: it shares the P2WPKH check, so the first cycle already fixed it.
+
+Sample re-run: P2WPKH 18,177 to 18,203 inputs (+6,993 WU), P2WSH non-multisig 323 to 297, nothing else moved. Partially mapped 420 to 394 transactions (4.1% to 3.4% of baseline weight). Report updated.

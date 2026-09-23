@@ -29,3 +29,11 @@ pub fn fixture_hex_paths() -> Vec<PathBuf> {
     assert!(!paths.is_empty(), "no fixtures found in {}", dir.display());
     paths
 }
+
+/// A stand-in ECDSA signature of `len` bytes: the DER sequence tag `0x30`,
+/// then filler. Only the tag and the length matter to classification.
+pub fn der_signature(len: usize) -> Vec<u8> {
+    let mut signature = vec![0u8; len];
+    signature[0] = 0x30;
+    signature
+}
