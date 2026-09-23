@@ -50,8 +50,14 @@ pub enum BaselineSpendType {
     P2trKeyPath,
     P2shP2wpkh,
     P2pkh,
-    /// Empty scriptSig, empty witness: nothing to migrate.
+    /// Empty scriptSig, empty witness (or no witness section): no signature,
+    /// nothing to migrate. From the spending side this also covers any other
+    /// output that needs no key, such as a bare `OP_TRUE`, which migrates the
+    /// same way.
     PayToAnchor,
+    /// The single input of a block's first transaction: no previous output, no
+    /// signature, nothing to migrate.
+    Coinbase,
     /// Empty scriptSig, witness `[dummy, m signatures, OP_CHECKMULTISIG script]`.
     P2wshMultisig(MultisigThreshold),
     /// scriptSig is one push of `0020<32-byte script hash>`, witness as for
@@ -63,6 +69,12 @@ pub enum BaselineSpendType {
 }
 
 impl BaselineSpendType {
+    /// Whether this spend has no signature, so migration leaves it unchanged.
+    #[must_use]
+    pub fn is_no_op(self) -> bool {
+        matches!(self, Self::PayToAnchor | Self::Coinbase)
+    }
+
     /// The Multisig threshold of a multisig spend type, `None` for single-key ones.
     #[must_use]
     pub fn threshold(self) -> Option<MultisigThreshold> {
@@ -74,7 +86,8 @@ impl BaselineSpendType {
             | Self::P2trKeyPath
             | Self::P2shP2wpkh
             | Self::P2pkh
-            | Self::PayToAnchor => None,
+            | Self::PayToAnchor
+            | Self::Coinbase => None,
         }
     }
 }
@@ -92,11 +105,59 @@ pub struct MultisigThreshold {
 pub enum InputResult {
     Mapped {
         spend_type: BaselineSpendType,
-        /// Weight of the whole input after migration: its non-witness bytes at 4 WU
-        /// each plus its witness bytes at 1 WU each.
+        /// The input's **Input weight** today.
+        baseline_weight: u64,
+        /// The input's **Input weight** after migration: its non-witness bytes at
+        /// 4 WU each plus its witness bytes at 1 WU each.
         template_weight: u64,
     },
-    Unmapped,
+    Unmapped {
+        reason: UnmappedReason,
+        /// The input's **Input weight** today.
+        baseline_weight: u64,
+    },
+}
+
+/// The spend shape observed on an **Unmapped** input, recognized from the
+/// spending side only. A label for what was seen, not a classification to rely
+/// on: the checks are heuristics.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum UnmappedReason {
+    /// Empty scriptSig; after removing any annex, at least 2 witness items remain
+    /// and the last is a control block (33 + 32k bytes, tapscript leaf version).
+    P2trScriptPath,
+    /// Empty scriptSig, a 64 or 65-byte Schnorr signature, then an annex.
+    P2trKeyPathAnnex,
+    /// Empty scriptSig and 2 or more witness items: a witness script spend that
+    /// is not standard multisig (timelocks, HTLCs, single-key scripts).
+    P2wshNonMultisig,
+    /// scriptSig is one push of a `0014` or `0020` redeem script (P2SH-P2WPKH or
+    /// P2SH-P2WSH), but the witness matched no template.
+    P2shSegwitNonMultisig,
+    /// Empty witness and a push-only scriptSig whose last push looks like a
+    /// redeem script: not a signature or public key, and well-formed script ops.
+    P2shNonMultisig,
+    /// Empty witness and any other non-empty scriptSig: P2PK, bare multisig, and
+    /// P2PKH spends outside the template's signature and key sizes.
+    LegacyOther,
+    /// None of the shapes above.
+    Unknown,
+}
+
+impl InputResult {
+    /// The input's **Input weight** today: its own non-witness bytes at 4 WU
+    /// each plus its witness bytes at 1 WU each.
+    #[must_use]
+    pub fn baseline_weight(&self) -> u64 {
+        match *self {
+            Self::Mapped {
+                baseline_weight, ..
+            }
+            | Self::Unmapped {
+                baseline_weight, ..
+            } => baseline_weight,
+        }
+    }
 }
 
 /// The outcome of migrating a transaction.
@@ -148,7 +209,7 @@ fn assumptions(parameter_set: ParameterSet, inputs: &[InputResult]) -> Vec<&'sta
     let spend_types = || {
         inputs.iter().filter_map(|input| match input {
             InputResult::Mapped { spend_type, .. } => Some(*spend_type),
-            InputResult::Unmapped => None,
+            InputResult::Unmapped { .. } => None,
         })
     };
     if spend_types().any(|spend_type| spend_type.threshold().is_some()) {
@@ -175,21 +236,51 @@ pub fn migrate(bytes: &[u8], parameter_set: ParameterSet) -> Result<Migration, P
     let mut baseline_input_stripped_size = 0;
     let mut migrated_input_stripped_size = 0;
     let mut migrated_witness_total = 0;
-    for input in &tx.inputs {
-        baseline_input_stripped_size += input_stripped_size(input.script_sig);
-        inputs.push(match classify(input) {
+    let is_coinbase = matches!(tx.inputs.as_slice(), [input] if is_null_outpoint(input));
+    let spend_types: Vec<Option<BaselineSpendType>> = tx
+        .inputs
+        .iter()
+        .map(|input| {
+            if is_coinbase {
+                Some(BaselineSpendType::Coinbase)
+            } else {
+                classify(input)
+            }
+        })
+        .collect();
+    // The migrated transaction has a witness section if the original did, or if
+    // any input gains a PQ witness. Then every input needs at least an item
+    // count; otherwise (only no-op inputs, all legacy) it stays legacy.
+    let migrated_is_segwit = tx.inputs.iter().any(|input| input.witness.is_some())
+        || spend_types
+            .iter()
+            .flatten()
+            .any(|spend_type| !spend_type.is_no_op());
+    for (input, spend_type) in tx.inputs.iter().zip(spend_types) {
+        let stripped_size = input_stripped_size(input.script_sig);
+        baseline_input_stripped_size += stripped_size;
+        let baseline_weight = 4 * stripped_size + input.witness.as_deref().map_or(0, witness_size);
+        inputs.push(match spend_type {
             Some(spend_type) => {
                 let non_witness_size =
                     input_stripped_size(migrated_script_sig(spend_type, input.script_sig));
-                let witness_size = migrated_witness_size(spend_type, parameter_set);
+                let witness_size = if migrated_is_segwit {
+                    migrated_witness_size(spend_type, parameter_set, input)
+                } else {
+                    0
+                };
                 migrated_input_stripped_size += non_witness_size;
                 migrated_witness_total += witness_size;
                 InputResult::Mapped {
                     spend_type,
+                    baseline_weight,
                     template_weight: 4 * non_witness_size + witness_size,
                 }
             }
-            None => InputResult::Unmapped,
+            None => InputResult::Unmapped {
+                reason: unmapped_reason(input),
+                baseline_weight,
+            },
         });
     }
 
@@ -199,7 +290,12 @@ pub fn migrate(bytes: &[u8], parameter_set: ParameterSet) -> Result<Migration, P
         .then(|| {
             let stripped_size =
                 tx.stripped_size - baseline_input_stripped_size + migrated_input_stripped_size;
-            let total_size = stripped_size + MARKER_AND_FLAG_SIZE + migrated_witness_total;
+            let marker_and_flag = if migrated_is_segwit {
+                MARKER_AND_FLAG_SIZE
+            } else {
+                0
+            };
+            let total_size = stripped_size + marker_and_flag + migrated_witness_total;
             let weight = 3 * stripped_size + total_size;
             TransactionWeight {
                 weight,
@@ -220,9 +316,15 @@ pub fn migrate(bytes: &[u8], parameter_set: ParameterSet) -> Result<Migration, P
     })
 }
 
+/// The outpoint a coinbase input spends: an all-zero txid and index `0xffffffff`.
+fn is_null_outpoint(input: &ParsedInput<'_>) -> bool {
+    let (txid, index) = input.previous_output.split_at(32);
+    txid.iter().all(|&byte| byte == 0) && index == [0xff; 4]
+}
+
 /// The scriptSig a template leaves after migration: empty for the witness-only
 /// templates, unchanged for P2SH-P2WPKH, which still needs a scriptSig that
-/// hashes to its P2SH output.
+/// hashes to its P2SH output, and for a coinbase, which has nothing to migrate.
 fn migrated_script_sig(spend_type: BaselineSpendType, original: &[u8]) -> &[u8] {
     match spend_type {
         BaselineSpendType::P2wpkh
@@ -231,20 +333,29 @@ fn migrated_script_sig(spend_type: BaselineSpendType, original: &[u8]) -> &[u8] 
         | BaselineSpendType::PayToAnchor
         | BaselineSpendType::P2wshMultisig(_)
         | BaselineSpendType::P2shMultisig(_) => &[],
-        BaselineSpendType::P2shP2wpkh | BaselineSpendType::P2shP2wshMultisig(_) => original,
+        BaselineSpendType::P2shP2wpkh
+        | BaselineSpendType::P2shP2wshMultisig(_)
+        | BaselineSpendType::Coinbase => original,
     }
 }
 
-/// Bytes of the migrated witness for a mapped input: the PQ template for every
-/// spend type but pay-to-anchor, which has nothing to migrate and keeps its
-/// single item-count byte.
-fn migrated_witness_size(spend_type: BaselineSpendType, parameter_set: ParameterSet) -> u64 {
+/// Bytes of the migrated witness for a mapped input in a migrated transaction
+/// that has a witness section: the PQ template for every spend type but the
+/// no-op ones, which keep the witness they have (an empty one if they had
+/// none).
+fn migrated_witness_size(
+    spend_type: BaselineSpendType,
+    parameter_set: ParameterSet,
+    input: &ParsedInput<'_>,
+) -> u64 {
     match spend_type {
         BaselineSpendType::P2wpkh
         | BaselineSpendType::P2trKeyPath
         | BaselineSpendType::P2shP2wpkh
         | BaselineSpendType::P2pkh => template_witness_size(parameter_set),
-        BaselineSpendType::PayToAnchor => 1,
+        BaselineSpendType::PayToAnchor | BaselineSpendType::Coinbase => {
+            witness_size(input.witness.as_deref().unwrap_or(&[]))
+        }
         BaselineSpendType::P2wshMultisig(threshold)
         | BaselineSpendType::P2shP2wshMultisig(threshold)
         | BaselineSpendType::P2shMultisig(threshold) => {
@@ -265,9 +376,10 @@ fn classify(input: &ParsedInput<'_>) -> Option<BaselineSpendType> {
     {
         return Some(BaselineSpendType::P2shP2wshMultisig(threshold));
     }
-    // A witness section present for this input, but empty: the spending side
-    // explicitly asserts "nothing needed here", which only pay-to-anchor does.
-    if input.script_sig.is_empty() && matches!(input.witness.as_deref(), Some([])) {
+    // Nothing in the scriptSig or witness: no signature to migrate. A
+    // transaction whose inputs are all like this must be serialized without the
+    // segwit marker, since Core rejects a marker when every witness is empty.
+    if input.script_sig.is_empty() && witness.is_empty() {
         return Some(BaselineSpendType::PayToAnchor);
     }
     if witness.is_empty()
@@ -299,6 +411,77 @@ fn classify(input: &ParsedInput<'_>) -> Option<BaselineSpendType> {
         }
     }
     None
+}
+
+/// What an input no template covers looks like. Checked in a fixed order; the
+/// first match wins.
+fn unmapped_reason(input: &ParsedInput<'_>) -> UnmappedReason {
+    let witness = input.witness.as_deref().unwrap_or(&[]);
+    if input.script_sig.is_empty() && is_p2tr_script_path(without_annex(witness)) {
+        return UnmappedReason::P2trScriptPath;
+    }
+    if input.script_sig.is_empty()
+        && let [signature, annex] = witness
+        && (64..=65).contains(&signature.len())
+        && annex.first() == Some(&0x50)
+    {
+        return UnmappedReason::P2trKeyPathAnnex;
+    }
+    if input.script_sig.is_empty() && witness.len() >= 2 {
+        return UnmappedReason::P2wshNonMultisig;
+    }
+    if is_p2sh_p2wpkh_redeem_script_push(input.script_sig)
+        || is_p2sh_p2wsh_redeem_script_push(input.script_sig)
+    {
+        return UnmappedReason::P2shSegwitNonMultisig;
+    }
+    if witness.is_empty()
+        && let Some(pushes) = read_push_only(input.script_sig)
+        && let Some(last) = pushes.last()
+        && is_redeem_script_candidate(last)
+    {
+        return UnmappedReason::P2shNonMultisig;
+    }
+    if witness.is_empty() && !input.script_sig.is_empty() {
+        return UnmappedReason::LegacyOther;
+    }
+    UnmappedReason::Unknown
+}
+
+/// A last scriptSig push that could be a P2SH redeem script. Almost any bytes
+/// read as some opcodes, so what rules a push out is looking like the other
+/// things a legacy scriptSig ends with: a DER signature or a public key.
+fn is_redeem_script_candidate(push: &[u8]) -> bool {
+    let looks_like_signature = push.first() == Some(&0x30) && (9..=73).contains(&push.len());
+    let looks_like_public_key = matches!(
+        (push.len(), push.first()),
+        (33, Some(0x02 | 0x03)) | (65, Some(0x04))
+    );
+    !push.is_empty()
+        && !looks_like_signature
+        && !looks_like_public_key
+        && read_script_ops(push).is_some()
+}
+
+/// The witness with its BIP-341 annex removed: with at least 2 items, a last
+/// item starting `0x50` is the annex.
+fn without_annex<'w, 'a>(witness: &'w [&'a [u8]]) -> &'w [&'a [u8]] {
+    match witness {
+        [rest @ .., last] if !rest.is_empty() && last.first() == Some(&0x50) => rest,
+        _ => witness,
+    }
+}
+
+/// At least a script and a control block, the control block 33 + 32k bytes
+/// (leaf version and internal key, then k Merkle path hashes) whose first byte
+/// is the tapscript leaf version `0xc0` plus a parity bit.
+fn is_p2tr_script_path(witness: &[&[u8]]) -> bool {
+    let [_, .., control_block] = witness else {
+        return false;
+    };
+    control_block.len() >= 33
+        && (control_block.len() - 33).is_multiple_of(32)
+        && control_block[0] & 0xfe == 0xc0
 }
 
 /// A scriptSig of exactly a DER signature and a 33 or 65-byte public key.
@@ -523,6 +706,15 @@ fn template_witness_size(parameter_set: ParameterSet) -> u64 {
 fn input_stripped_size(script_sig: &[u8]) -> u64 {
     let script_len = script_sig.len() as u64;
     36 + compact_size_len(script_len) + script_len + 4
+}
+
+/// Serialized bytes of a witness: its item count, then each item with its
+/// length prefix.
+fn witness_size(witness: &[&[u8]]) -> u64 {
+    let items = witness
+        .iter()
+        .map(|item| compact_size_len(item.len() as u64) + item.len() as u64);
+    compact_size_len(witness.len() as u64) + items.sum::<u64>()
 }
 
 fn compact_size_len(value: u64) -> u64 {

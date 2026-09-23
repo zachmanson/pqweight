@@ -7,7 +7,10 @@
 mod common;
 
 use common::fixtures_dir;
-use pqweight::{FeeRate, ParameterSet, aggregate};
+use pqweight::{
+    BaselineSpendType, BreakdownKind, BreakdownRow, FeeRate, ParameterSet, UnmappedReason,
+    aggregate,
+};
 
 /// A one-input, one-output segwit transaction with the given scriptSig and
 /// witness items, built the same way as `migrate.rs`'s `segwit_tx` helper.
@@ -163,4 +166,50 @@ fn fee_totals_sum_per_transaction_fees_not_the_fee_of_a_summed_vsize() {
 
     let fees = result.fees.expect("a fee rate was given");
     assert_eq!(fees.baseline, 164 + 200);
+}
+
+#[test]
+fn breakdown_has_one_row_per_spend_type_and_unmapped_reason_in_order_of_first_appearance() {
+    // p2wpkh: Input weight 270 (41 non-witness bytes x 4 + 106 witness bytes),
+    // ML-DSA-44 template weight 3903 (see migrate.rs).
+    // p2tr-scriptpath: 41 non-witness bytes x 4 = 164, witness: item count 1 +
+    // (1 + 64 signature) + (1 + 34 script) + (1 + 33 control block) = 135.
+    let lines = vec![
+        fixture_hex("p2wpkh"),
+        fixture_hex("p2tr-scriptpath"),
+        fixture_hex("p2wpkh"),
+    ];
+
+    let result = aggregate(lines.into_iter(), ParameterSet::MlDsa44, None);
+
+    assert_eq!(
+        result.breakdown,
+        vec![
+            BreakdownRow {
+                kind: BreakdownKind::Mapped(BaselineSpendType::P2wpkh),
+                inputs: 2,
+                baseline_weight: 2 * 270,
+                migrated_weight: Some(2 * 3903),
+            },
+            BreakdownRow {
+                kind: BreakdownKind::Unmapped(UnmappedReason::P2trScriptPath),
+                inputs: 1,
+                baseline_weight: 164 + 135,
+                migrated_weight: None,
+            },
+        ]
+    );
+}
+
+#[test]
+fn partially_mapped_transactions_have_their_own_baseline_totals() {
+    // Only p2tr-scriptpath is partially mapped: Oracle weight 465, vsize 117
+    // (p2tr-scriptpath.json). The report needs this to weigh the all-or-nothing
+    // migrated-total rule by weight, not only by transaction count.
+    let lines = vec![fixture_hex("p2wpkh"), fixture_hex("p2tr-scriptpath")];
+
+    let result = aggregate(lines.into_iter(), ParameterSet::MlDsa44, None);
+
+    assert_eq!(result.partially_mapped.weight, 465);
+    assert_eq!(result.partially_mapped.vsize, 117);
 }

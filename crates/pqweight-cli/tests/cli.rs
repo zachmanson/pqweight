@@ -338,3 +338,73 @@ fn aggregate_command_records_a_bad_line_without_aborting_the_batch() {
     assert!(text.contains("parse errors: 1"), "{text}");
     assert!(text.contains("line 2"), "{text}");
 }
+
+#[test]
+fn migrate_command_names_the_unmapped_reason_of_an_unmapped_input() {
+    let fx = fixture("p2tr-scriptpath");
+
+    let human = run(&["migrate", "--scheme", "ml-dsa-44", &fx.hex], None);
+    let json = run(
+        &["migrate", "--scheme", "ml-dsa-44", "--json", &fx.hex],
+        None,
+    );
+
+    assert!(
+        stdout(&human).contains("input 0: unmapped (P2TR script-path)"),
+        "{}",
+        stdout(&human)
+    );
+    let parsed: serde_json::Value = serde_json::from_str(&stdout(&json)).unwrap();
+    assert_eq!(parsed["inputs"][0]["status"], "unmapped");
+    assert_eq!(parsed["inputs"][0]["reason"], "P2TR script-path");
+}
+
+/// The whitespace-separated columns after `label` on the line that starts with
+/// it, so the check doesn't depend on column padding.
+fn row_after<'a>(text: &'a str, label: &str) -> Vec<&'a str> {
+    let line = text
+        .lines()
+        .find(|line| line.trim_start().starts_with(label))
+        .unwrap_or_else(|| panic!("no row for {label} in:\n{text}"));
+    line.trim_start()[label.len()..]
+        .split_whitespace()
+        .collect()
+}
+
+#[test]
+fn aggregate_command_prints_a_breakdown_by_spend_type_and_unmapped_reason() {
+    let p2wpkh = p2wpkh_fixture();
+    let script_path = fixture("p2tr-scriptpath");
+    let path = scratch_file("breakdown");
+    std::fs::write(
+        &path,
+        format!("{}\n{}\n{}\n", p2wpkh.hex, script_path.hex, p2wpkh.hex),
+    )
+    .unwrap();
+
+    let output = run(
+        &["aggregate", "--scheme", "ml-dsa-44", path.to_str().unwrap()],
+        None,
+    );
+    std::fs::remove_file(&path).ok();
+
+    assert!(output.status.success(), "{}", stderr(&output));
+    let text = stdout(&output);
+    // Input weights from the library's breakdown test: P2WPKH 270 each (template
+    // 3903 each), P2TR script-path 299. 540 / 839 = 64.4%, 299 / 839 = 35.6%.
+    // Columns: inputs, % of inputs, baseline Input weight, % of it, migrated.
+    assert_eq!(
+        row_after(&text, "P2WPKH"),
+        ["2", "66.7%", "540", "64.4%", "7806"]
+    );
+    assert_eq!(
+        row_after(&text, "P2TR script-path"),
+        ["1", "33.3%", "299", "35.6%", "-"]
+    );
+    // The partially mapped transaction's Oracle weight, 465 of 436 + 465 + 436
+    // = 1337 baseline weight, is 34.8%.
+    assert!(
+        text.contains("partially mapped baseline weight: 465 (34.8% of baseline)"),
+        "{text}"
+    );
+}

@@ -1,0 +1,10 @@
+{
+    "description":  "P2WSH single-key script (non-multisig) spend, 1 input, 1 output",
+    "oracle":  {
+                   "weight":  439,
+                   "vsize":  110,
+                   "size":  193
+               },
+    "core_version":  "Satoshi:31.1.0",
+    "recorded_by":  "scripts/record-fixtures.ps1"
+}

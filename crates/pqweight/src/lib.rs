@@ -7,11 +7,12 @@ mod parser;
 
 pub use aggregate::{
     AggregateCounts, AggregateError, AggregateFeeTotals, AggregateResult, AggregateTotals,
-    aggregate,
+    BreakdownKind, BreakdownRow, aggregate,
 };
 pub use fee::{FeeRate, FeeRateError, fee};
 pub use migration::{
-    BaselineSpendType, InputResult, Migration, MultisigThreshold, ParameterSet, migrate,
+    BaselineSpendType, InputResult, Migration, MultisigThreshold, ParameterSet, UnmappedReason,
+    migrate,
 };
 pub use parser::ParseError;
 

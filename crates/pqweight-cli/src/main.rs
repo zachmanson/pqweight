@@ -2,8 +2,8 @@ use std::io::Read;
 use std::process::ExitCode;
 
 use pqweight::{
-    AggregateResult, BaselineSpendType, FeeRate, InputResult, Migration, MultisigThreshold,
-    ParameterSet, aggregate, fee,
+    AggregateResult, BaselineSpendType, BreakdownKind, BreakdownRow, FeeRate, InputResult,
+    Migration, MultisigThreshold, ParameterSet, UnmappedReason, aggregate, fee,
 };
 
 fn main() -> ExitCode {
@@ -153,6 +153,12 @@ fn aggregate_human(result: &AggregateResult) -> String {
             }
         }
     }
+    lines.push(format!(
+        "partially mapped baseline weight: {} ({} of baseline)",
+        result.partially_mapped.weight,
+        percent(result.partially_mapped.weight, result.baseline.weight)
+    ));
+    lines.extend(breakdown_table(&result.breakdown));
     if !result.errors.is_empty() {
         lines.push("errors:".to_string());
         for error in &result.errors {
@@ -160,6 +166,77 @@ fn aggregate_human(result: &AggregateResult) -> String {
         }
     }
     lines.join("\n")
+}
+
+/// The breakdown as two sections, Mapped rows then Unmapped rows, each sorted
+/// by baseline Input weight, largest first.
+fn breakdown_table(breakdown: &[BreakdownRow]) -> Vec<String> {
+    let total_inputs: usize = breakdown.iter().map(|row| row.inputs).sum();
+    let total_weight: u64 = breakdown.iter().map(|row| row.baseline_weight).sum();
+    let label = |row: &BreakdownRow| match row.kind {
+        BreakdownKind::Mapped(spend_type) => spend_type_label(spend_type),
+        BreakdownKind::Unmapped(reason) => unmapped_reason_name(reason).to_string(),
+    };
+    let width = breakdown
+        .iter()
+        .map(|row| label(row).len())
+        .max()
+        .unwrap_or(0);
+
+    let mut lines = vec![
+        "breakdown (inputs, % of inputs, baseline input weight, % of it, migrated input weight):"
+            .to_string(),
+    ];
+    for (heading, mapped) in [("mapped:", true), ("unmapped:", false)] {
+        lines.push(heading.to_string());
+        let mut rows: Vec<&BreakdownRow> = breakdown
+            .iter()
+            .filter(|row| matches!(row.kind, BreakdownKind::Mapped(_)) == mapped)
+            .collect();
+        rows.sort_by_key(|row| std::cmp::Reverse(row.baseline_weight));
+        if rows.is_empty() {
+            lines.push("  (none)".to_string());
+        }
+        for row in rows {
+            let migrated = row
+                .migrated_weight
+                .map_or_else(|| "-".to_string(), |weight| weight.to_string());
+            lines.push(format!(
+                "  {:<width$}  {:>8}  {:>6}  {:>12}  {:>6}  {:>12}",
+                label(row),
+                row.inputs,
+                percent(row.inputs as u64, total_inputs as u64),
+                row.baseline_weight,
+                percent(row.baseline_weight, total_weight),
+                migrated,
+            ));
+        }
+    }
+    lines
+}
+
+/// `part` as a percentage of `whole` to one decimal place, such as `64.4%`.
+fn percent(part: u64, whole: u64) -> String {
+    if whole == 0 {
+        return "-".to_string();
+    }
+    // Display only: counts and weights this large (over 2^52) never occur, so
+    // the precision loss doesn't affect the one decimal shown.
+    #[allow(clippy::cast_precision_loss)]
+    let ratio = part as f64 / whole as f64;
+    format!("{:.1}%", ratio * 100.0)
+}
+
+fn unmapped_reason_name(reason: UnmappedReason) -> &'static str {
+    match reason {
+        UnmappedReason::P2trScriptPath => "P2TR script-path",
+        UnmappedReason::P2trKeyPathAnnex => "P2TR key-path with annex",
+        UnmappedReason::P2wshNonMultisig => "P2WSH non-multisig",
+        UnmappedReason::P2shSegwitNonMultisig => "P2SH-wrapped segwit non-multisig",
+        UnmappedReason::P2shNonMultisig => "P2SH non-multisig",
+        UnmappedReason::LegacyOther => "legacy other",
+        UnmappedReason::Unknown => "unknown",
+    }
 }
 
 fn parse_scheme(scheme: &str) -> Result<ParameterSet, String> {
@@ -180,6 +257,7 @@ fn spend_type_name(spend_type: BaselineSpendType) -> &'static str {
         BaselineSpendType::P2shP2wpkh => "P2SH-P2WPKH",
         BaselineSpendType::P2pkh => "P2PKH",
         BaselineSpendType::PayToAnchor => "pay-to-anchor",
+        BaselineSpendType::Coinbase => "coinbase",
         BaselineSpendType::P2wshMultisig(_) => "P2WSH multisig",
         BaselineSpendType::P2shP2wshMultisig(_) => "P2SH-P2WSH multisig",
         BaselineSpendType::P2shMultisig(_) => "P2SH multisig",
@@ -201,11 +279,14 @@ fn migrate_human(migration: &Migration, baseline_vsize: u64, fee_rate: Option<Fe
             InputResult::Mapped {
                 spend_type,
                 template_weight,
+                ..
             } => format!(
                 "input {i}: mapped ({}), weight: {template_weight}",
                 spend_type_label(*spend_type)
             ),
-            InputResult::Unmapped => format!("input {i}: unmapped"),
+            InputResult::Unmapped { reason, .. } => {
+                format!("input {i}: unmapped ({})", unmapped_reason_name(*reason))
+            }
         });
     }
     match &migration.migrated {
@@ -256,6 +337,7 @@ fn migrate_json(migration: &Migration, baseline_vsize: u64, fee_rate: Option<Fee
             InputResult::Mapped {
                 spend_type,
                 template_weight,
+                ..
             } => {
                 let threshold = match spend_type.threshold() {
                     Some(MultisigThreshold { m, n }) => {
@@ -268,7 +350,10 @@ fn migrate_json(migration: &Migration, baseline_vsize: u64, fee_rate: Option<Fee
                     spend_type_name(*spend_type)
                 )
             }
-            InputResult::Unmapped => r#"{"status":"unmapped"}"#.to_string(),
+            InputResult::Unmapped { reason, .. } => format!(
+                r#"{{"status":"unmapped","reason":"{}"}}"#,
+                unmapped_reason_name(*reason)
+            ),
         })
         .collect();
 

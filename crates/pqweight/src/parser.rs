@@ -110,6 +110,8 @@ impl<'a> Reader<'a> {
 
 /// One input's spending data: what its scriptSig and witness contain.
 pub(crate) struct ParsedInput<'a> {
+    /// The 36-byte outpoint: previous txid, then its output index (little-endian).
+    pub previous_output: &'a [u8],
     pub script_sig: &'a [u8],
     /// `None` when the transaction has no witness section at all (a legacy,
     /// non-segwit transaction). `Some` when it does, even if this particular
@@ -148,11 +150,12 @@ pub(crate) fn parse(bytes: &[u8]) -> Result<ParsedTransaction<'_>, ParseError> {
     }
     let mut parsed_inputs = Vec::new();
     for _ in 0..inputs {
-        r.skip(36, "previous output")?;
+        let previous_output = r.take(36, "previous output")?;
         let script_len = r.read_compact_size("scriptSig length")?;
         let script_sig = r.take(script_len, "scriptSig")?;
         r.skip(4, "sequence")?;
         parsed_inputs.push(ParsedInput {
+            previous_output,
             script_sig,
             witness: None,
         });

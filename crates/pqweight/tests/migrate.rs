@@ -8,7 +8,8 @@ mod common;
 
 use common::{decode_hex, fixtures_dir};
 use pqweight::{
-    BaselineSpendType, InputResult, MultisigThreshold, ParameterSet, migrate, transaction_weight,
+    BaselineSpendType, InputResult, MultisigThreshold, ParameterSet, UnmappedReason, migrate,
+    transaction_weight,
 };
 use proptest::prelude::*;
 
@@ -156,12 +157,219 @@ fn legacy_tx_with_script_sig(script_sig: &[u8]) -> Vec<u8> {
     tx
 }
 
+/// The parts of an Input result that classification and template tests check:
+/// Mapped spend type and template weight, or just "Unmapped".
+#[derive(Debug, PartialEq, Eq)]
+enum Summary {
+    Mapped(BaselineSpendType, u64),
+    Unmapped,
+}
+
+fn summaries(inputs: &[InputResult]) -> Vec<Summary> {
+    inputs
+        .iter()
+        .map(|input| match *input {
+            InputResult::Mapped {
+                spend_type,
+                template_weight,
+                ..
+            } => Summary::Mapped(spend_type, template_weight),
+            InputResult::Unmapped { .. } => Summary::Unmapped,
+        })
+        .collect()
+}
+
 fn is_mapped_as(tx: &[u8], expected: BaselineSpendType) -> bool {
     let migration = migrate(tx, ParameterSet::MlDsa44).expect("valid transaction");
     matches!(
         migration.inputs[0],
         InputResult::Mapped { spend_type, .. } if spend_type == expected
     )
+}
+
+/// The Unmapped reason of the first input, or `None` if it is mapped.
+fn unmapped_reason(tx: &[u8]) -> Option<UnmappedReason> {
+    let migration = migrate(tx, ParameterSet::MlDsa44).expect("valid transaction");
+    match migration.inputs[0] {
+        InputResult::Unmapped { reason, .. } => Some(reason),
+        InputResult::Mapped { .. } => None,
+    }
+}
+
+#[test]
+fn p2tr_script_path_spend_is_unmapped_as_p2tr_script_path() {
+    assert_eq!(
+        unmapped_reason(&load_fixture("p2tr-scriptpath")),
+        Some(UnmappedReason::P2trScriptPath)
+    );
+}
+
+#[test]
+fn p2tr_script_path_needs_a_control_block_and_a_script_before_it() {
+    let script = [0x51u8; 34];
+    let annex = [0x50u8, 0x01];
+    let control_block = |len: usize, first: u8| {
+        let mut block = vec![0u8; len];
+        block[0] = first;
+        block
+    };
+    let internal_key_only = control_block(33, 0xc0);
+    let one_path_hash_odd_parity = control_block(65, 0xc1);
+    let wrong_length = control_block(34, 0xc0);
+    let wrong_leaf_version = control_block(33, 0xc2);
+    // A key-path signature with a sighash byte is 65 bytes (= 33 + 32) and can
+    // start with 0xc0; with an annex it must not pass for a script-path spend.
+    let signature_like_control_block = control_block(65, 0xc0);
+
+    // (name, witness, is P2TR script-path)
+    let cases: [(&str, Vec<&[u8]>, bool); 6] = [
+        (
+            "33-byte control block",
+            vec![&script, &internal_key_only],
+            true,
+        ),
+        (
+            "65-byte control block, odd parity",
+            vec![&script, &one_path_hash_odd_parity],
+            true,
+        ),
+        (
+            "script path with annex",
+            vec![&script, &internal_key_only, &annex],
+            true,
+        ),
+        (
+            "control block of 34 bytes",
+            vec![&script, &wrong_length],
+            false,
+        ),
+        (
+            "leaf version 0xc2",
+            vec![&script, &wrong_leaf_version],
+            false,
+        ),
+        (
+            "key path with annex",
+            vec![&signature_like_control_block, &annex],
+            false,
+        ),
+    ];
+    for (name, witness, expected) in cases {
+        let reason = unmapped_reason(&segwit_tx(&[], &witness));
+        assert_eq!(
+            reason == Some(UnmappedReason::P2trScriptPath),
+            expected,
+            "{name}"
+        );
+    }
+}
+
+#[test]
+fn p2tr_key_path_spend_with_an_annex_is_unmapped_as_key_path_with_annex() {
+    assert_eq!(
+        unmapped_reason(&load_fixture("p2tr-keypath-annex")),
+        Some(UnmappedReason::P2trKeyPathAnnex)
+    );
+}
+
+#[test]
+fn p2wsh_single_key_script_spend_is_unmapped_as_p2wsh_non_multisig() {
+    assert_eq!(
+        unmapped_reason(&load_fixture("p2wsh-pk")),
+        Some(UnmappedReason::P2wshNonMultisig)
+    );
+}
+
+#[test]
+fn p2sh_p2wsh_single_key_script_spend_is_unmapped_as_p2sh_wrapped_segwit_non_multisig() {
+    assert_eq!(
+        unmapped_reason(&load_fixture("p2sh-p2wsh-pk")),
+        Some(UnmappedReason::P2shSegwitNonMultisig)
+    );
+}
+
+#[test]
+fn p2sh_p2wpkh_shape_with_an_uncompressed_key_is_unmapped_as_p2sh_wrapped_segwit() {
+    let mut redeem_script_push = vec![0x16, 0x00, 0x14];
+    redeem_script_push.extend_from_slice(&[0u8; 20]);
+    let tx = segwit_tx(&redeem_script_push, &[&[0u8; 72], &[4u8; 65]]);
+
+    assert_eq!(
+        unmapped_reason(&tx),
+        Some(UnmappedReason::P2shSegwitNonMultisig)
+    );
+}
+
+#[test]
+fn p2sh_single_key_script_spend_is_unmapped_as_p2sh_non_multisig() {
+    assert_eq!(
+        unmapped_reason(&load_fixture("p2sh-pk")),
+        Some(UnmappedReason::P2shNonMultisig)
+    );
+}
+
+#[test]
+fn legacy_script_sigs_ending_in_a_signature_or_key_are_unmapped_as_legacy_other() {
+    let mut signature = [0u8; 72];
+    signature[0] = 0x30; // DER sequence tag
+    let mut uncompressed_key = [0u8; 65];
+    uncompressed_key[0] = 0x04;
+
+    // (name, scriptSig)
+    let cases: [(&str, Vec<u8>); 3] = [
+        ("P2PK", [&[72][..], &signature].concat()),
+        ("bare 2-of-3 multisig", {
+            let mut script_sig = vec![0x00];
+            for _ in 0..2 {
+                script_sig.push(72);
+                script_sig.extend_from_slice(&signature);
+            }
+            script_sig
+        }),
+        ("P2PKH with a 74-byte signature", {
+            let mut script_sig = vec![74, 0x30];
+            script_sig.extend_from_slice(&[0u8; 73]);
+            script_sig.push(65);
+            script_sig.extend_from_slice(&uncompressed_key);
+            script_sig
+        }),
+    ];
+    for (name, script_sig) in cases {
+        let reason = unmapped_reason(&legacy_tx_with_script_sig(&script_sig));
+        assert_eq!(reason, Some(UnmappedReason::LegacyOther), "{name}");
+    }
+}
+
+#[test]
+fn shapes_matching_no_reason_are_unmapped_as_unknown() {
+    // (name, transaction)
+    let cases = [
+        (
+            "non-P2SH scriptSig alongside a witness",
+            segwit_tx(&[0x01, 0x51], &[&[0u8; 72], &[2u8; 33]]),
+        ),
+        ("one short witness item", segwit_tx(&[], &[&[0u8; 10]])),
+    ];
+    for (name, tx) in cases {
+        assert_eq!(
+            unmapped_reason(&tx),
+            Some(UnmappedReason::Unknown),
+            "{name}"
+        );
+    }
+}
+
+#[test]
+fn input_weight_counts_non_witness_bytes_at_4_wu_and_witness_bytes_at_1_wu() {
+    // p2pkh.hex: scriptSig length byte 0x6a (106). Outpoint 36 + length prefix 1 +
+    // scriptSig 106 + sequence 4 = 147 non-witness bytes x 4 = 588. No witness.
+    let legacy = migrate(&load_fixture("p2pkh"), ParameterSet::MlDsa44).expect("valid");
+    // p2wpkh.hex: empty scriptSig, so 36 + 1 + 0 + 4 = 41 bytes x 4 = 164. Witness:
+    // item count 1 + (1 + 70-byte signature) + (1 + 33-byte pubkey) = 106 x 1.
+    let segwit = migrate(&load_fixture("p2wpkh"), ParameterSet::MlDsa44).expect("valid");
+
+    assert_eq!(legacy.inputs[0].baseline_weight(), 588);
+    assert_eq!(segwit.inputs[0].baseline_weight(), 164 + 106);
 }
 
 #[test]
@@ -207,7 +415,7 @@ fn p2wpkh_shape_with_an_extra_witness_item_or_a_script_sig_is_unmapped() {
 
     for tx in [extra_item, with_script_sig] {
         let migration = migrate(&tx, ParameterSet::MlDsa44).expect("valid transaction");
-        assert_eq!(migration.inputs, vec![InputResult::Unmapped]);
+        assert_eq!(summaries(&migration.inputs), vec![Summary::Unmapped]);
         assert_eq!(migration.migrated, None);
     }
 }
@@ -239,7 +447,7 @@ fn p2tr_key_path_with_an_annex_is_unmapped() {
 
     let migration = migrate(&tx, ParameterSet::MlDsa44).expect("valid transaction");
 
-    assert_eq!(migration.inputs, vec![InputResult::Unmapped]);
+    assert_eq!(summaries(&migration.inputs), vec![Summary::Unmapped]);
     assert_eq!(migration.migrated, None);
 }
 
@@ -264,7 +472,7 @@ fn p2sh_p2wpkh_requires_the_0014_redeem_script_push_and_a_p2wpkh_witness() {
     for script_sig in [wrong_push_len, wrong_program] {
         let tx = segwit_tx(&script_sig, &[&signature, &pubkey]);
         let migration = migrate(&tx, ParameterSet::MlDsa44).expect("valid transaction");
-        assert_eq!(migration.inputs, vec![InputResult::Unmapped]);
+        assert_eq!(summaries(&migration.inputs), vec![Summary::Unmapped]);
     }
 }
 
@@ -281,11 +489,8 @@ fn p2sh_p2wpkh_input_is_migrated_keeping_the_redeem_script_scriptsig() {
     // 32 + 4 + 1 (length prefix) + 23 (scriptSig) + 4 (sequence) = 64 bytes = 256 WU.
     // Input template weight: 256 + 3739 = 3995 WU.
     assert_eq!(
-        migration.inputs,
-        vec![InputResult::Mapped {
-            spend_type: BaselineSpendType::P2shP2wpkh,
-            template_weight: 3995,
-        }]
+        summaries(&migration.inputs),
+        vec![Summary::Mapped(BaselineSpendType::P2shP2wpkh, 3995,)]
     );
 }
 
@@ -315,7 +520,7 @@ fn p2pkh_near_misses_are_unmapped() {
 
     for tx in [wrong_pubkey_len, missing_pubkey, extra_push] {
         let migration = migrate(&tx, ParameterSet::MlDsa44).expect("valid transaction");
-        assert_eq!(migration.inputs, vec![InputResult::Unmapped]);
+        assert_eq!(summaries(&migration.inputs), vec![Summary::Unmapped]);
         assert_eq!(migration.migrated, None);
     }
 }
@@ -331,11 +536,8 @@ fn p2pkh_input_is_migrated_to_an_ml_dsa_44_witness() {
     // witness-only templates: 32 + 4 + 1 (empty length) + 4 = 41 bytes = 164 WU.
     // Input template weight: 164 + 3739 = 3903 WU.
     assert_eq!(
-        migration.inputs,
-        vec![InputResult::Mapped {
-            spend_type: BaselineSpendType::P2pkh,
-            template_weight: 3903,
-        }]
+        summaries(&migration.inputs),
+        vec![Summary::Mapped(BaselineSpendType::P2pkh, 3903,)]
     );
 
     // The transaction had no witness before migration, so it gains the 2-byte
@@ -363,11 +565,11 @@ fn p2wsh_multisig_input_is_migrated_with_every_public_key_in_the_script() {
     // Non-witness part: empty scriptSig, 32 + 4 + 1 + 4 = 41 bytes = 164 WU.
     // Input template weight: 164 + 8799 = 8963 WU.
     assert_eq!(
-        migration.inputs,
-        vec![InputResult::Mapped {
-            spend_type: BaselineSpendType::P2wshMultisig(MultisigThreshold { m: 2, n: 3 }),
-            template_weight: 8963,
-        }]
+        summaries(&migration.inputs),
+        vec![Summary::Mapped(
+            BaselineSpendType::P2wshMultisig(MultisigThreshold { m: 2, n: 3 }),
+            8963,
+        )]
     );
 
     // Baseline witness from the fixture: count 1 + dummy 1 + two 71-byte
@@ -393,11 +595,11 @@ fn p2wsh_multisig_with_slh_dsa_pushes_its_small_keys_directly() {
     //   = 1 + 1 + 15718 + 103 = 15823 WU.
     // Input template weight: 164 (non-witness) + 15823 = 15987 WU.
     assert_eq!(
-        migration.inputs,
-        vec![InputResult::Mapped {
-            spend_type: BaselineSpendType::P2wshMultisig(MultisigThreshold { m: 2, n: 3 }),
-            template_weight: 15987,
-        }]
+        summaries(&migration.inputs),
+        vec![Summary::Mapped(
+            BaselineSpendType::P2wshMultisig(MultisigThreshold { m: 2, n: 3 }),
+            15987,
+        )]
     );
 }
 
@@ -437,11 +639,11 @@ fn p2wsh_multisig_3_of_5_template_weight() {
     //   = 1 + 1 + 7269 + 6581 = 13852 WU.
     // Input template weight: 164 + 13852 = 14016 WU.
     assert_eq!(
-        migration.inputs,
-        vec![InputResult::Mapped {
-            spend_type: BaselineSpendType::P2wshMultisig(MultisigThreshold { m: 3, n: 5 }),
-            template_weight: 14016,
-        }]
+        summaries(&migration.inputs),
+        vec![Summary::Mapped(
+            BaselineSpendType::P2wshMultisig(MultisigThreshold { m: 3, n: 5 }),
+            14016,
+        )]
     );
 }
 
@@ -458,11 +660,11 @@ fn p2wsh_multisig_above_16_keys_keeps_its_2_byte_number_push() {
     //   = 1 + 1 + 2423 + 26307 = 28732 WU.
     // Input template weight: 164 + 28732 = 28896 WU.
     assert_eq!(
-        migration.inputs,
-        vec![InputResult::Mapped {
-            spend_type: BaselineSpendType::P2wshMultisig(MultisigThreshold { m: 1, n: 20 }),
-            template_weight: 28896,
-        }]
+        summaries(&migration.inputs),
+        vec![Summary::Mapped(
+            BaselineSpendType::P2wshMultisig(MultisigThreshold { m: 1, n: 20 }),
+            28896,
+        )]
     );
 }
 
@@ -490,7 +692,11 @@ fn p2wsh_multisig_numbers_must_be_minimally_encoded_and_at_most_20() {
         let items: Vec<&[u8]> = witness.iter().map(Vec::as_slice).collect();
         let tx = segwit_tx(&[], &items);
         let migration = migrate(&tx, ParameterSet::MlDsa44).expect("valid transaction");
-        assert_eq!(migration.inputs, vec![InputResult::Unmapped], "{name}");
+        assert_eq!(
+            summaries(&migration.inputs),
+            vec![Summary::Unmapped],
+            "{name}"
+        );
     }
 }
 
@@ -561,7 +767,11 @@ fn p2wsh_multisig_near_misses_are_unmapped() {
         ("timelock script", timelock_script),
     ] {
         let migration = migrate(&tx, ParameterSet::MlDsa44).expect("valid transaction");
-        assert_eq!(migration.inputs, vec![InputResult::Unmapped], "{name}");
+        assert_eq!(
+            summaries(&migration.inputs),
+            vec![Summary::Unmapped],
+            "{name}"
+        );
     }
 }
 
@@ -577,11 +787,11 @@ fn p2sh_p2wsh_multisig_is_migrated_keeping_the_redeem_script_scriptsig() {
     // prefix: 32 + 4 + 1 + 35 + 4 = 76 bytes = 304 WU.
     // Input template weight: 304 + 8799 = 9103 WU.
     assert_eq!(
-        migration.inputs,
-        vec![InputResult::Mapped {
-            spend_type: BaselineSpendType::P2shP2wshMultisig(MultisigThreshold { m: 2, n: 3 }),
-            template_weight: 9103,
-        }]
+        summaries(&migration.inputs),
+        vec![Summary::Mapped(
+            BaselineSpendType::P2shP2wshMultisig(MultisigThreshold { m: 2, n: 3 }),
+            9103,
+        )]
     );
 
     // Oracle: weight 722, size 371, so stripped size (722 - 371) / 3 = 117 and
@@ -610,7 +820,7 @@ fn p2sh_p2wsh_multisig_requires_the_0020_redeem_script_push() {
     for script_sig in [wrong_program, short_hash] {
         let tx = multisig_witness_tx(&script_sig, 2, 3);
         let migration = migrate(&tx, ParameterSet::MlDsa44).expect("valid transaction");
-        assert_eq!(migration.inputs, vec![InputResult::Unmapped]);
+        assert_eq!(summaries(&migration.inputs), vec![Summary::Unmapped]);
     }
 }
 
@@ -624,11 +834,11 @@ fn p2sh_multisig_moves_signatures_and_script_into_the_witness() {
     // Non-witness part: scriptSig becomes empty, 41 bytes = 164 WU.
     // Input template weight: 164 + 8799 = 8963 WU.
     assert_eq!(
-        migration.inputs,
-        vec![InputResult::Mapped {
-            spend_type: BaselineSpendType::P2shMultisig(MultisigThreshold { m: 2, n: 3 }),
-            template_weight: 8963,
-        }]
+        summaries(&migration.inputs),
+        vec![Summary::Mapped(
+            BaselineSpendType::P2shMultisig(MultisigThreshold { m: 2, n: 3 }),
+            8963,
+        )]
     );
 
     // Oracle: size 334, all stripped (no witness). The fixture's scriptSig is
@@ -685,7 +895,11 @@ fn p2sh_multisig_near_misses_are_unmapped() {
     ] {
         let tx = legacy_tx_with_script_sig(&script_sig);
         let migration = migrate(&tx, ParameterSet::MlDsa44).expect("valid transaction");
-        assert_eq!(migration.inputs, vec![InputResult::Unmapped], "{name}");
+        assert_eq!(
+            summaries(&migration.inputs),
+            vec![Summary::Unmapped],
+            "{name}"
+        );
     }
 
     // A P2SH-shaped scriptSig alongside a non-empty witness is not a legacy
@@ -695,8 +909,8 @@ fn p2sh_multisig_near_misses_are_unmapped() {
     let with_witness = segwit_tx(&short_script_sig, &[&signature]);
     let migration = migrate(&with_witness, ParameterSet::MlDsa44).expect("valid transaction");
     assert_eq!(
-        migration.inputs,
-        vec![InputResult::Unmapped],
+        summaries(&migration.inputs),
+        vec![Summary::Unmapped],
         "with witness"
     );
 }
@@ -755,25 +969,125 @@ fn pay_to_anchor_is_a_no_op_not_unmapped() {
     assert_eq!(migration.inputs.len(), 2);
     // Nothing to migrate: no witness bytes before, none after.
     assert_eq!(
-        migration.inputs[0],
-        InputResult::Mapped {
-            spend_type: BaselineSpendType::PayToAnchor,
+        summaries(&migration.inputs)[0],
+        Summary::Mapped(
+            BaselineSpendType::PayToAnchor,
             // Non-witness 41 bytes x 4 WU, plus the 1-byte empty item count x 1 WU.
-            template_weight: 4 * 41 + 1,
-        }
+            4 * 41 + 1,
+        )
     );
     assert!(migration.migrated.is_some(), "both inputs are mapped");
 }
 
 #[test]
-fn empty_script_sig_in_a_legacy_transaction_is_not_pay_to_anchor() {
-    // No segwit marker at all: this shape is Unmapped, not a no-op, because the
-    // spending side never asserted "empty witness" the way a real anchor spend does.
-    let tx = legacy_tx(&[]);
+fn coinbase_input_is_a_no_op_keeping_the_oracle_weight() {
+    let tx = load_fixture("coinbase");
 
     let migration = migrate(&tx, ParameterSet::MlDsa44).expect("valid transaction");
 
-    assert_eq!(migration.inputs, vec![InputResult::Unmapped]);
+    assert!(is_mapped_as(&tx, BaselineSpendType::Coinbase));
+    // Nothing to migrate, so the migrated total is the Oracle's weight (564) and
+    // vsize (141) from coinbase.json.
+    let total = migration.migrated.expect("the only input is mapped");
+    assert_eq!((total.weight, total.vsize), (564, 141));
+}
+
+/// Overwrites the outpoint of the first input with `txid` and `index`. Works for
+/// transactions built by `legacy_tx*` (first input at byte 5) and `segwit_tx*`
+/// (byte 7, after the marker and flag).
+fn with_first_outpoint(mut tx: Vec<u8>, txid: [u8; 32], index: u32) -> Vec<u8> {
+    let start = if tx[4] == 0x00 { 7 } else { 5 };
+    tx[start..start + 32].copy_from_slice(&txid);
+    tx[start + 32..start + 36].copy_from_slice(&index.to_le_bytes());
+    tx
+}
+
+#[test]
+fn pre_segwit_coinbase_stays_legacy_with_its_weight_unchanged() {
+    // A block with no segwit spends needs no witness commitment, so its coinbase
+    // has no witness section. Migration must not add a marker, flag or witness.
+    let tx = with_first_outpoint(
+        legacy_tx_with_script_sig(&[0x03, 0x01, 0x02, 0x03]),
+        [0; 32],
+        0xffff_ffff,
+    );
+    let baseline = transaction_weight(&tx).expect("valid transaction");
+
+    let migration = migrate(&tx, ParameterSet::MlDsa44).expect("valid transaction");
+
+    assert!(is_mapped_as(&tx, BaselineSpendType::Coinbase));
+    assert_eq!(migration.migrated, Some(baseline));
+}
+
+#[test]
+fn null_outpoint_near_misses_are_not_coinbase() {
+    let script_sig = [0x03, 0x01, 0x02, 0x03];
+    // Index 0 instead of 0xffffffff.
+    let wrong_index = with_first_outpoint(legacy_tx_with_script_sig(&script_sig), [0; 32], 0);
+    // Index right, but one txid byte is not zero.
+    let mut txid = [0; 32];
+    txid[31] = 1;
+    let wrong_txid = with_first_outpoint(legacy_tx_with_script_sig(&script_sig), txid, 0xffff_ffff);
+    // A null outpoint on one input of a two-input transaction: a coinbase has
+    // exactly one input.
+    let signature = [0u8; 72];
+    let pubkey = [0u8; 33];
+    let two_inputs = with_first_outpoint(
+        segwit_tx_with_inputs(&[(&script_sig, &[]), (&[], &[&signature, &pubkey])]),
+        [0; 32],
+        0xffff_ffff,
+    );
+
+    for tx in [wrong_index, wrong_txid, two_inputs] {
+        assert!(!is_mapped_as(&tx, BaselineSpendType::Coinbase));
+    }
+}
+
+#[test]
+fn legacy_form_empty_spend_is_pay_to_anchor_and_stays_legacy() {
+    // Bitcoin Core rejects a segwit marker when every witness is empty, so a
+    // transaction whose only inputs are anchor spends must be serialized in
+    // legacy form. That is the common real shape (one-input anchor chains), so
+    // it is a no-op like any other anchor spend, and gains no marker or witness.
+    let tx = legacy_tx(&[]);
+    let baseline = transaction_weight(&tx).expect("valid transaction");
+
+    let migration = migrate(&tx, ParameterSet::MlDsa44).expect("valid transaction");
+
+    assert!(is_mapped_as(&tx, BaselineSpendType::PayToAnchor));
+    assert_eq!(migration.migrated, Some(baseline));
+}
+
+#[test]
+fn anchor_spend_gains_an_empty_witness_when_another_input_makes_the_migrated_transaction_segwit() {
+    // Legacy transaction: an anchor spend (empty scriptSig), then a P2PKH spend.
+    let mut p2pkh_script_sig = vec![72];
+    p2pkh_script_sig.extend_from_slice(&[0u8; 72]);
+    p2pkh_script_sig.push(33);
+    p2pkh_script_sig.extend_from_slice(&[2u8; 33]);
+    let mut tx = Vec::new();
+    tx.extend_from_slice(&1u32.to_le_bytes()); // version
+    tx.push(2); // input count
+    for script_sig in [&[][..], &p2pkh_script_sig] {
+        tx.extend_from_slice(&[0u8; 36]); // prevout
+        tx.push(u8::try_from(script_sig.len()).expect("short scriptSig"));
+        tx.extend_from_slice(script_sig);
+        tx.extend_from_slice(&[0xff; 4]); // sequence
+    }
+    tx.push(1); // output count
+    tx.extend_from_slice(&0u64.to_le_bytes()); // value
+    tx.push(0); // empty scriptPubKey
+    tx.extend_from_slice(&0u32.to_le_bytes()); // locktime
+
+    let migration = migrate(&tx, ParameterSet::MlDsa44).expect("valid transaction");
+
+    // The P2PKH input's PQ witness makes the migrated transaction segwit, and a
+    // segwit transaction has a witness item count for every input: the anchor
+    // spend's is an empty one, 1 byte. 41 non-witness bytes x 4 + 1 = 165.
+    assert_eq!(
+        summaries(&migration.inputs)[0],
+        Summary::Mapped(BaselineSpendType::PayToAnchor, 4 * 41 + 1)
+    );
 }
 
 #[test]
@@ -873,7 +1187,7 @@ fn a_transaction_with_one_unmapped_input_has_no_migrated_total() {
     // Every input still gets its own reported result...
     assert_eq!(migration.inputs.len(), 2);
     assert!(matches!(migration.inputs[0], InputResult::Mapped { .. }));
-    assert_eq!(migration.inputs[1], InputResult::Unmapped);
+    assert_eq!(summaries(&migration.inputs)[1], Summary::Unmapped);
     // ...but there is no migrated total, because not every input is mapped,
     // so there is nothing to check the relay limit against either.
     assert_eq!(migration.migrated, None);
@@ -892,11 +1206,8 @@ fn p2wpkh_input_is_migrated_to_a_falcon_512_witness() {
     // Non-witness part of the input (empty scriptSig): 41 bytes = 164 WU.
     // Input template weight: 164 + 1570 = 1734 WU.
     assert_eq!(
-        migration.inputs,
-        vec![InputResult::Mapped {
-            spend_type: BaselineSpendType::P2wpkh,
-            template_weight: 1734,
-        }]
+        summaries(&migration.inputs),
+        vec![Summary::Mapped(BaselineSpendType::P2wpkh, 1734,)]
     );
 }
 
@@ -912,11 +1223,8 @@ fn p2wpkh_input_is_migrated_to_an_slh_dsa_128s_witness() {
     // Non-witness part of the input (empty scriptSig): 41 bytes = 164 WU.
     // Input template weight: 164 + 7893 = 8057 WU.
     assert_eq!(
-        migration.inputs,
-        vec![InputResult::Mapped {
-            spend_type: BaselineSpendType::P2wpkh,
-            template_weight: 8057,
-        }]
+        summaries(&migration.inputs),
+        vec![Summary::Mapped(BaselineSpendType::P2wpkh, 8057,)]
     );
 }
 
@@ -931,11 +1239,8 @@ fn p2wpkh_input_is_migrated_to_an_ml_dsa_44_witness() {
     // Non-witness part of the input: 32 + 4 + 1 (empty scriptSig) + 4 = 41 bytes = 164 WU.
     // Input template weight: 164 + 3739 = 3903 WU.
     assert_eq!(
-        migration.inputs,
-        vec![InputResult::Mapped {
-            spend_type: BaselineSpendType::P2wpkh,
-            template_weight: 3903,
-        }]
+        summaries(&migration.inputs),
+        vec![Summary::Mapped(BaselineSpendType::P2wpkh, 3903,)]
     );
 
     // Rest of the transaction: version 4 + counts 2 + output (8 + 1 + 22) + locktime 4 = 41 bytes

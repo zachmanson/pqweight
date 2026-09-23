@@ -1,4 +1,4 @@
-<#
+﻿<#
 .SYNOPSIS
   Records Fixtures: real signed transactions plus the Oracle's (Bitcoin Core's) weight and vsize.
 
@@ -7,8 +7,8 @@
   spend of each, and asks Core to decode it. Writes <name>.hex and <name>.json to the
   fixtures directory. Not run in CI: fixtures are committed so CI never needs a node.
 
-  Covers P2PKH, P2WPKH, P2SH-P2WPKH, P2WSH, P2SH and P2SH-P2WSH 2-of-3 multisig and
-  P2TR key-path. P2TR script-path, annex and large mainnet transactions are added by hand.
+  Covers P2PKH, P2WPKH, P2SH-P2WPKH, P2WSH, P2SH and P2SH-P2WSH 2-of-3 multisig,
+  P2WSH, P2SH and P2SH-P2WSH single-key (non-multisig) scripts, P2TR key-path and a coinbase. P2TR script-path, annex and large mainnet transactions are added by hand.
 
   Every run uses fresh keys, so signatures can change length by a byte and shift the
   hand-derived numbers in tests. Pass -Only to write just the fixtures you need.
@@ -135,6 +135,10 @@ try {
     # BIP-341's provably unspendable internal key, so only the script path can spend.
     $nums = '50929b74c1a04954b78b4b6035e97a5e078a5a0f28ec96d547bfee9ace803ac0'
     $scriptPathAddress = Import-PrivateDescriptor "tr($nums,pk($base/13/0))"
+    # Single-key scripts: the simplest script spends that are not multisig.
+    $p2wshPkAddress = Import-PrivateDescriptor "wsh(pk($base/20/0))"
+    $p2shPkAddress = Import-PrivateDescriptor "sh(pk($base/21/0))"
+    $p2shP2wshPkAddress = Import-PrivateDescriptor "sh(wsh(pk($base/22/0)))"
 
     $types = @(
         @{ Name = 'p2pkh';       Description = 'Legacy P2PKH spend, 1 input, 1 output';                   Address = (Invoke-Rpc 'getnewaddress' @('address_type=legacy')).Trim() },
@@ -143,6 +147,9 @@ try {
         @{ Name = 'p2wsh-multisig'; Description = 'P2WSH 2-of-3 multisig spend, 1 input, 1 output';      Address = $multisigAddress },
         @{ Name = 'p2sh-multisig'; Description = 'Legacy P2SH 2-of-3 multisig spend, 1 input, 1 output';  Address = $p2shMultisigAddress },
         @{ Name = 'p2sh-p2wsh-multisig'; Description = 'Wrapped segwit P2SH-P2WSH 2-of-3 multisig spend, 1 input, 1 output'; Address = $p2shP2wshMultisigAddress },
+        @{ Name = 'p2wsh-pk'; Description = 'P2WSH single-key script (non-multisig) spend, 1 input, 1 output'; Address = $p2wshPkAddress },
+        @{ Name = 'p2sh-pk'; Description = 'Legacy P2SH single-key script (non-multisig) spend, 1 input, 1 output'; Address = $p2shPkAddress },
+        @{ Name = 'p2sh-p2wsh-pk'; Description = 'Wrapped segwit P2SH-P2WSH single-key script (non-multisig) spend, 1 input, 1 output'; Address = $p2shP2wshPkAddress },
         @{ Name = 'p2tr-keypath'; Description = 'Taproot key-path spend, 1 input, 1 output';             Address = (Invoke-Rpc 'getnewaddress' @('address_type=bech32m')).Trim() },
         @{ Name = 'p2tr-scriptpath'; Description = 'Taproot script-path spend (single pk leaf, unspendable internal key), 1 input, 1 output'; Address = $scriptPathAddress }
     )
@@ -151,7 +158,12 @@ try {
     # outputs as inputs, consuming an address's coins before we get to spend them.
     $amounts = '{' + (($types | ForEach-Object { '"' + $_.Address + '":1' }) -join ',') + '}'
     Invoke-Rpc 'sendmany' @("amounts=$amounts") | Out-Null
-    Invoke-Rpc 'generatetoaddress' @('nblocks=1', "address=$minerAddress") | Out-Null
+    $fundingBlock = (Invoke-RpcJson 'generatetoaddress' @('nblocks=1', "address=$minerAddress"))[0]
+
+    # The coinbase of the block that confirmed a segwit spend, so it carries the
+    # witness reserved value like a real mainnet coinbase.
+    $coinbase = (Invoke-RpcJson 'getblock' @("blockhash=$fundingBlock", 'verbosity=2')).tx[0]
+    $coinbaseDecoded = Invoke-RpcJson 'decoderawtransaction' @("hexstring=$($coinbase.hex)")
 
     Write-Host "Writing fixtures to $OutDir"
     $signedByName = @{}
@@ -169,6 +181,8 @@ try {
         $signedByName[$t.Name] = $signed.hex
         Write-Fixture -Name $t.Name -Description $t.Description -Hex $signed.hex -Decoded $decoded -CoreVersion $coreVersion
     }
+
+    Write-Fixture -Name 'coinbase' -Description 'Coinbase of a block containing segwit spends: one input spending no previous output, witness reserved value' -Hex $coinbase.hex -Decoded $coinbaseDecoded -CoreVersion $coreVersion
 
     # A transaction with 260 outputs: the output count no longer fits in one byte, so it is
     # serialized with the 3-byte compact size (0xFD prefix). Paid from the wallet's own coins.

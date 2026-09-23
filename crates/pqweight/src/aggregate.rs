@@ -2,7 +2,7 @@
 //! and how often does template coverage fail, across a batch rather than one
 //! spend.
 
-use crate::migration::{InputResult, ParameterSet, migrate};
+use crate::migration::{BaselineSpendType, InputResult, ParameterSet, UnmappedReason, migrate};
 use crate::{FeeRate, TransactionWeight, fee, transaction_weight};
 
 /// Weight and vsize summed across transactions.
@@ -45,6 +45,26 @@ pub struct AggregateCounts {
     pub parse_errors: usize,
 }
 
+/// What a breakdown row groups inputs by: the Baseline spend type of Mapped
+/// inputs, or the Unmapped reason of Unmapped ones.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum BreakdownKind {
+    Mapped(BaselineSpendType),
+    Unmapped(UnmappedReason),
+}
+
+/// Every input of one kind across the batch, from every parsed transaction
+/// (fully or partially mapped).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct BreakdownRow {
+    pub kind: BreakdownKind,
+    pub inputs: usize,
+    /// Summed **Input weight** today.
+    pub baseline_weight: u64,
+    /// Summed **Input weight** after migration. `None` for Unmapped rows.
+    pub migrated_weight: Option<u64>,
+}
+
 /// The result of running `migrate()` over many transactions and summing.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct AggregateResult {
@@ -53,9 +73,14 @@ pub struct AggregateResult {
     /// Migrated weight/vsize, summed over fully-mapped transactions only.
     /// `None` when no transaction is fully mapped (nothing to sum).
     pub migrated: Option<AggregateTotals>,
+    /// Today's weight/vsize of the partially mapped transactions alone: the part
+    /// of `baseline` that has no migrated total.
+    pub partially_mapped: AggregateTotals,
     /// `None` unless a fee rate was given.
     pub fees: Option<AggregateFeeTotals>,
     pub counts: AggregateCounts,
+    /// One row per kind of input seen, in order of first appearance.
+    pub breakdown: Vec<BreakdownRow>,
     pub errors: Vec<AggregateError>,
 }
 
@@ -72,9 +97,11 @@ pub fn aggregate(
 ) -> AggregateResult {
     let mut baseline = AggregateTotals::default();
     let mut migrated = AggregateTotals::default();
+    let mut partially_mapped = AggregateTotals::default();
     let mut baseline_fee = 0u64;
     let mut migrated_fee = 0u64;
     let mut counts = AggregateCounts::default();
+    let mut breakdown: Vec<BreakdownRow> = Vec::new();
     let mut errors = Vec::new();
 
     for (index, raw_line) in lines.enumerate() {
@@ -119,22 +146,27 @@ pub fn aggregate(
             baseline_fee += fee(tx_baseline.vsize, rate);
         }
 
+        for input in &tx_migration.inputs {
+            add_to_breakdown(&mut breakdown, input);
+        }
+
         counts.unmapped_inputs += tx_migration
             .inputs
             .iter()
-            .filter(|input| matches!(input, InputResult::Unmapped))
+            .filter(|input| matches!(input, InputResult::Unmapped { .. }))
             .count();
 
-        match tx_migration.migrated {
-            Some(total) => {
-                counts.fully_mapped += 1;
-                migrated.weight += total.weight;
-                migrated.vsize += total.vsize;
-                if let Some(rate) = fee_rate {
-                    migrated_fee += fee(total.vsize, rate);
-                }
+        if let Some(total) = tx_migration.migrated {
+            counts.fully_mapped += 1;
+            migrated.weight += total.weight;
+            migrated.vsize += total.vsize;
+            if let Some(rate) = fee_rate {
+                migrated_fee += fee(total.vsize, rate);
             }
-            None => counts.partially_mapped += 1,
+        } else {
+            counts.partially_mapped += 1;
+            partially_mapped.weight += tx_baseline.weight;
+            partially_mapped.vsize += tx_baseline.vsize;
         }
     }
     counts.parse_errors = errors.len();
@@ -142,11 +174,42 @@ pub fn aggregate(
     AggregateResult {
         baseline,
         migrated: (counts.fully_mapped > 0).then_some(migrated),
+        partially_mapped,
         fees: fee_rate.map(|_| AggregateFeeTotals {
             baseline: baseline_fee,
             migrated: (counts.fully_mapped > 0).then_some(migrated_fee),
         }),
         counts,
+        breakdown,
         errors,
     }
+}
+
+/// Adds one input to the row for its kind, starting that row if it is the
+/// first input of its kind.
+fn add_to_breakdown(breakdown: &mut Vec<BreakdownRow>, input: &InputResult) {
+    let (kind, migrated_weight) = match *input {
+        InputResult::Mapped {
+            spend_type,
+            template_weight,
+            ..
+        } => (BreakdownKind::Mapped(spend_type), Some(template_weight)),
+        InputResult::Unmapped { reason, .. } => (BreakdownKind::Unmapped(reason), None),
+    };
+    let index = breakdown
+        .iter()
+        .position(|row| row.kind == kind)
+        .unwrap_or_else(|| {
+            breakdown.push(BreakdownRow {
+                kind,
+                inputs: 0,
+                baseline_weight: 0,
+                migrated_weight: migrated_weight.map(|_| 0),
+            });
+            breakdown.len() - 1
+        });
+    let row = &mut breakdown[index];
+    row.inputs += 1;
+    row.baseline_weight += input.baseline_weight();
+    row.migrated_weight = row.migrated_weight.zip(migrated_weight).map(|(a, b)| a + b);
 }

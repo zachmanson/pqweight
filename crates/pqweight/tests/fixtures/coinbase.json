@@ -1,0 +1,10 @@
+{
+    "description":  "Coinbase of a block containing segwit spends: one input spending no previous output, witness reserved value",
+    "oracle":  {
+                   "weight":  564,
+                   "vsize":  141,
+                   "size":  168
+               },
+    "core_version":  "Satoshi:31.1.0",
+    "recorded_by":  "scripts/record-fixtures.ps1"
+}

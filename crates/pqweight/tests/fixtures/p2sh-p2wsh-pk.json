@@ -1,0 +1,10 @@
+{
+    "description":  "Wrapped segwit P2SH-P2WSH single-key script (non-multisig) spend, 1 input, 1 output",
+    "oracle":  {
+                   "weight":  579,
+                   "vsize":  145,
+                   "size":  228
+               },
+    "core_version":  "Satoshi:31.1.0",
+    "recorded_by":  "scripts/record-fixtures.ps1"
+}
