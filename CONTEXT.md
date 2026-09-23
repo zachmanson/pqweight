@@ -30,6 +30,13 @@ _Avoid_: Scenario, PQ transaction type
 **Unmapped**:
 The result for a real spend that no Migration template covers. Reported explicitly so unmodeled transactions never silently skew totals.
 
+**Unmapped reason**:
+The spend shape observed on an Unmapped input, such as P2TR script-path or non-multisig P2WSH, recognized from the spending side only. It names what was seen, never what a Migration template would cost.
+_Avoid_: Unmapped type, failure reason
+
+**Coinbase input**:
+The single input of a block's first transaction, which spends no previous output and carries no signature. It has nothing to migrate, so it is mapped with its weight unchanged, never Unmapped.
+
 **Long-exposure attack**:
 Breaking a public key that is already visible on-chain before the coins are spent, such as a taproot output key, with unlimited time.
 
@@ -54,6 +61,9 @@ _Avoid_: Quorum, k-of-n, "multisig" alone as a spend type name
 
 **Input result**:
 The outcome for one input of a transaction: either its Migration template weight, or Unmapped. A transaction has a migrated total only when every input is mapped.
+
+**Input weight**:
+The weight of one input's own bytes: outpoint, scriptSig and sequence at 4 weight units each, plus its witness at 1 each. Transaction overhead and outputs belong to no input, so a transaction's Input weights do not sum to its Weight.
 
 **Fully mapped**:
 A transaction whose Input result is Mapped for every input. Only fully mapped transactions contribute to a migrated total, individually or summed across a batch.
