@@ -52,6 +52,39 @@ pub enum BaselineSpendType {
     P2pkh,
     /// Empty scriptSig, empty witness: nothing to migrate.
     PayToAnchor,
+    /// Empty scriptSig, witness `[dummy, m signatures, OP_CHECKMULTISIG script]`.
+    P2wshMultisig(MultisigThreshold),
+    /// scriptSig is one push of `0020<32-byte script hash>`, witness as for
+    /// P2WSH multisig.
+    P2shP2wshMultisig(MultisigThreshold),
+    /// Empty witness, scriptSig of pushes `[OP_0, m signatures, redeem script]`.
+    /// Migrates to a witness-carried script with an empty scriptSig.
+    P2shMultisig(MultisigThreshold),
+}
+
+impl BaselineSpendType {
+    /// The Multisig threshold of a multisig spend type, `None` for single-key ones.
+    #[must_use]
+    pub fn threshold(self) -> Option<MultisigThreshold> {
+        match self {
+            Self::P2wshMultisig(threshold)
+            | Self::P2shP2wshMultisig(threshold)
+            | Self::P2shMultisig(threshold) => Some(threshold),
+            Self::P2wpkh
+            | Self::P2trKeyPath
+            | Self::P2shP2wpkh
+            | Self::P2pkh
+            | Self::PayToAnchor => None,
+        }
+    }
+}
+
+/// The m-of-n shape of a multisig spend: n public keys in its script, m
+/// signatures in its witness.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct MultisigThreshold {
+    pub m: u8,
+    pub n: u8,
 }
 
 /// The outcome for one input: its **Migration template** weight, or **Unmapped**.
@@ -92,14 +125,37 @@ const BASE_ASSUMPTIONS: [&str; 3] = [
     "outputs are unchanged by migration",
 ];
 
-/// The assumptions that apply to `parameter_set`, in a fixed order: the base
-/// assumptions every migration states, plus any specific to this parameter set.
-fn assumptions(parameter_set: ParameterSet) -> Vec<&'static str> {
+/// Assumptions stated when any input is a multisig spend.
+const MULTISIG_ASSUMPTIONS: [&str; 2] = [
+    "the 10,000-byte script size limit and witnessScript standardness limits (3,600 bytes, 100 stack items) are raised by a soft fork",
+    "PQ multisig keeps today's OP_CHECKMULTISIG layout, including its dummy element, with every public key in the script",
+];
+
+/// Assumption stated when any input is a legacy P2SH multisig spend.
+const P2SH_MULTISIG_ASSUMPTION: &str =
+    "P2SH multisig spends migrate to a witness-carried script with an empty scriptSig";
+
+/// The assumptions that apply, in a fixed order: the base assumptions every
+/// migration states, then any specific to this parameter set, then any specific
+/// to the spend types that were mapped.
+fn assumptions(parameter_set: ParameterSet, inputs: &[InputResult]) -> Vec<&'static str> {
     let mut assumptions: Vec<&'static str> = BASE_ASSUMPTIONS.to_vec();
     if parameter_set == ParameterSet::Falcon512 {
         assumptions.push(
             "Falcon-512 signatures are padded to a fixed 666 bytes; real signatures are variable-length",
         );
+    }
+    let spend_types = || {
+        inputs.iter().filter_map(|input| match input {
+            InputResult::Mapped { spend_type, .. } => Some(*spend_type),
+            InputResult::Unmapped => None,
+        })
+    };
+    if spend_types().any(|spend_type| spend_type.threshold().is_some()) {
+        assumptions.extend(MULTISIG_ASSUMPTIONS);
+    }
+    if spend_types().any(|spend_type| matches!(spend_type, BaselineSpendType::P2shMultisig(_))) {
+        assumptions.push(P2SH_MULTISIG_ASSUMPTION);
     }
     assumptions
 }
@@ -155,11 +211,12 @@ pub fn migrate(bytes: &[u8], parameter_set: ParameterSet) -> Result<Migration, P
 
     let exceeds_relay_limit = migrated.as_ref().map(|w| w.weight > RELAY_WEIGHT_LIMIT);
 
+    let assumptions = assumptions(parameter_set, &inputs);
     Ok(Migration {
         inputs,
         migrated,
         exceeds_relay_limit,
-        assumptions: assumptions(parameter_set),
+        assumptions,
     })
 }
 
@@ -171,8 +228,10 @@ fn migrated_script_sig(spend_type: BaselineSpendType, original: &[u8]) -> &[u8] 
         BaselineSpendType::P2wpkh
         | BaselineSpendType::P2trKeyPath
         | BaselineSpendType::P2pkh
-        | BaselineSpendType::PayToAnchor => &[],
-        BaselineSpendType::P2shP2wpkh => original,
+        | BaselineSpendType::PayToAnchor
+        | BaselineSpendType::P2wshMultisig(_)
+        | BaselineSpendType::P2shMultisig(_) => &[],
+        BaselineSpendType::P2shP2wpkh | BaselineSpendType::P2shP2wshMultisig(_) => original,
     }
 }
 
@@ -186,6 +245,11 @@ fn migrated_witness_size(spend_type: BaselineSpendType, parameter_set: Parameter
         | BaselineSpendType::P2shP2wpkh
         | BaselineSpendType::P2pkh => template_witness_size(parameter_set),
         BaselineSpendType::PayToAnchor => 1,
+        BaselineSpendType::P2wshMultisig(threshold)
+        | BaselineSpendType::P2shP2wshMultisig(threshold)
+        | BaselineSpendType::P2shMultisig(threshold) => {
+            multisig_witness_size(threshold, parameter_set)
+        }
     }
 }
 
@@ -195,6 +259,11 @@ fn classify(input: &ParsedInput<'_>) -> Option<BaselineSpendType> {
         && is_der_signature_and_compressed_pubkey(witness)
     {
         return Some(BaselineSpendType::P2shP2wpkh);
+    }
+    if is_p2sh_p2wsh_redeem_script_push(input.script_sig)
+        && let Some(threshold) = multisig_threshold(witness, KeySizes::CompressedOnly)
+    {
+        return Some(BaselineSpendType::P2shP2wshMultisig(threshold));
     }
     // A witness section present for this input, but empty: the spending side
     // explicitly asserts "nothing needed here", which only pay-to-anchor does.
@@ -207,11 +276,20 @@ fn classify(input: &ParsedInput<'_>) -> Option<BaselineSpendType> {
     {
         return Some(BaselineSpendType::P2pkh);
     }
+    if witness.is_empty()
+        && let Some(pushes) = read_push_only(input.script_sig)
+        && let Some(threshold) = multisig_threshold(&pushes, KeySizes::CompressedOrUncompressed)
+    {
+        return Some(BaselineSpendType::P2shMultisig(threshold));
+    }
     if !input.script_sig.is_empty() {
         return None;
     }
     if is_der_signature_and_compressed_pubkey(witness) {
         return Some(BaselineSpendType::P2wpkh);
+    }
+    if let Some(threshold) = multisig_threshold(witness, KeySizes::CompressedOnly) {
+        return Some(BaselineSpendType::P2wshMultisig(threshold));
     }
     if let [signature] = witness {
         // Schnorr signature, an optional trailing sighash byte. Anything with a
@@ -261,6 +339,175 @@ fn is_p2sh_p2wpkh_redeem_script_push(script_sig: &[u8]) -> bool {
         return false;
     };
     *push_len == 0x16 && hash.len() == 20
+}
+
+/// `OP_CHECKMULTISIG`.
+const OP_CHECKMULTISIG: u8 = 0xae;
+
+/// Public key sizes a multisig script may use. Segwit policy rejects
+/// uncompressed keys, so only legacy P2SH allows them.
+#[derive(Clone, Copy)]
+enum KeySizes {
+    /// 33 bytes.
+    CompressedOnly,
+    /// 33 or 65 bytes, mixed freely.
+    CompressedOrUncompressed,
+}
+
+impl KeySizes {
+    fn allows(self, len: usize) -> bool {
+        match self {
+            Self::CompressedOnly => len == 33,
+            Self::CompressedOrUncompressed => matches!(len, 33 | 65),
+        }
+    }
+}
+
+/// The threshold of a spend whose stack items are `[dummy, m signatures, script]`,
+/// where the dummy is empty, each signature is 70 to 73 bytes (DER plus sighash
+/// byte) and the script is exactly `OP_m <n keys> OP_n OP_CHECKMULTISIG` with
+/// keys of `key_sizes`. Lengths and structure only; nothing is verified.
+fn multisig_threshold(items: &[&[u8]], key_sizes: KeySizes) -> Option<MultisigThreshold> {
+    let [dummy, signatures @ .., script] = items else {
+        return None;
+    };
+    let threshold = parse_multisig_script(script, key_sizes)?;
+    let signatures_match = signatures.len() == usize::from(threshold.m)
+        && signatures.iter().all(|s| (70..=73).contains(&s.len()));
+    (dummy.is_empty() && signatures_match).then_some(threshold)
+}
+
+/// Most keys a standard multisig script can hold (Bitcoin Core's
+/// `MAX_PUBKEYS_PER_MULTISIG`).
+const MAX_MULTISIG_KEYS: u8 = 20;
+
+/// Reads `<m> <n keys> <n> OP_CHECKMULTISIG`, with 1 <= m <= n <= 20, `m` and
+/// `n` minimally encoded, and every key a direct push of `key_sizes`.
+fn parse_multisig_script(script: &[u8], key_sizes: KeySizes) -> Option<MultisigThreshold> {
+    let ops = read_script_ops(script)?;
+    let [m, keys @ .., n, ScriptOp::Opcode(OP_CHECKMULTISIG)] = ops.as_slice() else {
+        return None;
+    };
+    let m = script_number(m)?;
+    let n = script_number(n)?;
+    let keys_match = keys.len() == usize::from(n)
+        && keys
+            .iter()
+            .all(|key| matches!(key, ScriptOp::Push(k) if key_sizes.allows(k.len())));
+    (1 <= m && m <= n && n <= MAX_MULTISIG_KEYS && keys_match).then_some(MultisigThreshold { m, n })
+}
+
+/// One element of a script: a direct data push, or any other single opcode.
+#[derive(Clone, Copy)]
+enum ScriptOp<'a> {
+    Push(&'a [u8]),
+    Opcode(u8),
+}
+
+/// Splits `script` into direct pushes (0x01 to 0x4b) and single-byte opcodes.
+/// Returns `None` for `OP_PUSHDATA1/2/4`, which a multisig script never needs
+/// for its keys, or a push that runs past the end of the script.
+fn read_script_ops(script: &[u8]) -> Option<Vec<ScriptOp<'_>>> {
+    let mut ops = Vec::new();
+    let mut rest = script;
+    while let Some((&opcode, tail)) = rest.split_first() {
+        match opcode {
+            0x01..=0x4b => {
+                let (push, tail) = tail.split_at_checked(usize::from(opcode))?;
+                ops.push(ScriptOp::Push(push));
+                rest = tail;
+            }
+            0x4c..=0x4e => return None,
+            _ => {
+                ops.push(ScriptOp::Opcode(opcode));
+                rest = tail;
+            }
+        }
+    }
+    Some(ops)
+}
+
+/// Reads a push-only scriptSig as its pushed items: `OP_0` pushes an empty
+/// item, 0x01 to 0x4b push that many bytes, `OP_PUSHDATA1` and `OP_PUSHDATA2`
+/// push the length that follows (1 or 2 bytes, little-endian). Returns `None`
+/// for any other opcode or a push that runs past the end.
+fn read_push_only(script_sig: &[u8]) -> Option<Vec<&[u8]>> {
+    let mut pushes = Vec::new();
+    let mut rest = script_sig;
+    while let Some((&opcode, tail)) = rest.split_first() {
+        let (len, tail) = match opcode {
+            0x00..=0x4b => (usize::from(opcode), tail),
+            0x4c => {
+                let (&len, tail) = tail.split_first()?;
+                (usize::from(len), tail)
+            }
+            0x4d => {
+                let (len, tail) = tail.split_first_chunk::<2>()?;
+                (usize::from(u16::from_le_bytes(*len)), tail)
+            }
+            _ => return None,
+        };
+        let (push, tail) = tail.split_at_checked(len)?;
+        pushes.push(push);
+        rest = tail;
+    }
+    Some(pushes)
+}
+
+/// A small script number in its minimal encoding: `OP_1` to `OP_16` (0x51 to
+/// 0x60), or a 1-byte push of a value from 17 to 127.
+fn script_number(op: &ScriptOp<'_>) -> Option<u8> {
+    match *op {
+        ScriptOp::Opcode(opcode @ 0x51..=0x60) => Some(opcode - 0x50),
+        ScriptOp::Push(&[value @ 17..=0x7f]) => Some(value),
+        _ => None,
+    }
+}
+
+/// Bytes a script number takes in its minimal encoding (see [`script_number`]).
+fn script_number_len(value: u8) -> u64 {
+    if value <= 16 { 1 } else { 2 }
+}
+
+/// Bytes of the literal-swap multisig template witness
+/// `[dummy, m PQ signatures, OP_m <n PQ keys> OP_n OP_CHECKMULTISIG]`: the item
+/// count plus each item with its compact-size length prefix.
+fn multisig_witness_size(threshold: MultisigThreshold, parameter_set: ParameterSet) -> u64 {
+    let m = u64::from(threshold.m);
+    let n = u64::from(threshold.n);
+    let signature = parameter_set.signature_size();
+    let public_key = parameter_set.public_key_size();
+
+    let item_count = compact_size_len(m + 2);
+    let dummy = 1;
+    let signatures = m * (compact_size_len(signature) + signature);
+    let script_len = script_number_len(threshold.m)
+        + n * (push_opcode_len(public_key) + public_key)
+        + script_number_len(threshold.n)
+        + 1;
+    let script = compact_size_len(script_len) + script_len;
+    item_count + dummy + signatures + script
+}
+
+/// Bytes of the opcode that pushes `len` bytes inside a script: a direct push up
+/// to 75, then `OP_PUSHDATA1`, `OP_PUSHDATA2` and `OP_PUSHDATA4` with their
+/// 1, 2 and 4-byte lengths.
+fn push_opcode_len(len: u64) -> u64 {
+    match len {
+        0..=0x4b => 1,
+        0x4c..=0xff => 2,
+        0x100..=0xffff => 3,
+        _ => 5,
+    }
+}
+
+/// A scriptSig that is a single push of exactly `0020<32-byte hash>` (34 bytes):
+/// the P2SH-P2WSH redeem script.
+fn is_p2sh_p2wsh_redeem_script_push(script_sig: &[u8]) -> bool {
+    let [push_len, 0x00, 0x20, hash @ ..] = script_sig else {
+        return false;
+    };
+    *push_len == 0x22 && hash.len() == 32
 }
 
 /// Bytes of the template witness `[pq_signature, pq_pubkey]`: the item count plus

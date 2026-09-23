@@ -10,7 +10,9 @@ pub use aggregate::{
     aggregate,
 };
 pub use fee::{FeeRate, FeeRateError, fee};
-pub use migration::{BaselineSpendType, InputResult, Migration, ParameterSet, migrate};
+pub use migration::{
+    BaselineSpendType, InputResult, Migration, MultisigThreshold, ParameterSet, migrate,
+};
 pub use parser::ParseError;
 
 /// The crate version, so the CLI can report which library it was built against.

@@ -1,4 +1,4 @@
-Status: ready-for-agent
+Status: done
 
 # Multisig migration templates (slice 3)
 
@@ -36,7 +36,7 @@ Teach `migrate()` to classify standard `OP_CHECKMULTISIG` spends in three wrappe
   - "the 10,000-byte script size limit and witnessScript standardness limits (3,600 bytes, 100 stack items) are raised by a soft fork"
   - "PQ multisig keeps today's OP_CHECKMULTISIG layout, including its dummy element, with every public key in the script"
   - "P2SH spends migrate to a witness-carried script with an empty scriptSig"
-  Only the 400,000 WU relay limit is checked, as before. Add a multisig assumption only when the transaction has a multisig input, or always (the implementer's choice, but be consistent and test it).
+  Only the 400,000 WU relay limit is checked, as before. Resolved: the multisig assumptions are stated only when a multisig input is mapped, and the P2SH one only when a P2SH multisig input is mapped, so single-key migrations don't list assumptions about scripts they never touched.
 - **Domain model**: `BaselineSpendType` gains multisig variants carrying `m` and `n` (see **Multisig threshold** in `CONTEXT.md`).
 - **Output**:
   - Human: `input 0: P2WSH multisig 2-of-3, template weight 8963`.
@@ -47,10 +47,10 @@ Teach `migrate()` to classify standard `OP_CHECKMULTISIG` spends in three wrappe
 
 Fixture `p2wsh-multisig` (2-of-3, Oracle weight 582) at ML-DSA-44:
 
-- Baseline input witness: count 1 + dummy 1 + sig (1+72) + sig (1+71) + script (1+105) = 253 B. Input weight = 4 × 41 + 253 = 417 WU.
+- Baseline input witness: count 1 + dummy 1 + sig (1+71) + sig (1+71) + script (1+105) = 252 B. Input weight = 4 × 41 + 252 = 416 WU.
 - Migrated witness: count 1 + dummy 1 + 2 × (3 + 2420) + script, where script = 1 + 3 × (3 + 1312) + 1 + 1 = 3948 B, pushed with a 3-byte prefix = 3951 B. Total 1 + 1 + 4846 + 3951 = 8799 B.
 - Template weight = 4 × 41 + 8799 = 8963 WU (about 21× baseline).
-- Transaction: stripped size and marker unchanged, so migrated weight = 582 − 253 + 8799 = 9128 WU, vsize 2282.
+- Transaction: stripped size and marker unchanged, so migrated weight = 582 − 252 + 8799 = 9129 WU, vsize 2283. (The first draft of this ticket said 253 / 9128; the fixture hex shows two 71-byte signatures.)
 
 Re-derive these in the test comment; don't copy them blindly.
 
@@ -71,3 +71,22 @@ Re-derive these in the test comment; don't copy them blindly.
 - Bare multisig, custom scripts (Lightning, timelocks, miniscript).
 - Per-spend-type breakdown in `aggregate`.
 - Long-exposure and Short-exposure tagging.
+
+## Comments
+
+Implemented via TDD, one vertical slice per cycle: P2WSH tracer bullet on the `p2wsh-multisig`
+fixture, CLI output, near-misses, script numbers 17 to 20 (pushed as `01 xx`, 2 bytes, kept in
+the template), P2SH-P2WSH, legacy P2SH, conditional assumptions, property test.
+
+- `BaselineSpendType` gained `P2wshMultisig`, `P2shP2wshMultisig` and `P2shMultisig`, each
+  carrying a public `MultisigThreshold { m, n }`, plus a `threshold()` method the CLI uses.
+- Human output keeps slice 1's existing line format rather than the one sketched above:
+  `input 0: mapped (P2WSH multisig 2-of-3), weight: 8963`.
+- `record-fixtures.ps1` gained P2SH and P2SH-P2WSH 2-of-3 spends and an `-Only` filter, because a
+  full rerun uses fresh keys and can shift signature lengths in fixtures other tests hand-derive
+  from. Recorded `p2sh-multisig` and `p2sh-p2wsh-multisig` against Core 31.1.0 with
+  `-Only`, so existing fixtures are untouched. Their weight tests use these real fixtures.
+- New tests were mutation-checked (dropping the dummy check, the m <= n check, loosening key sizes,
+  mis-sizing `OP_PUSHDATA2` each made a test fail).
+- `cargo fmt --all --check`, `cargo clippy --workspace --all-targets -- -D warnings` and
+  `cargo test --workspace` all clean (81 tests passing).

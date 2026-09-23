@@ -7,15 +7,23 @@
   spend of each, and asks Core to decode it. Writes <name>.hex and <name>.json to the
   fixtures directory. Not run in CI: fixtures are committed so CI never needs a node.
 
-  Covers P2PKH, P2WPKH, P2SH-P2WPKH, P2WSH 2-of-3 multisig and P2TR key-path.
-  P2TR script-path, annex and large mainnet transactions are added by hand.
+  Covers P2PKH, P2WPKH, P2SH-P2WPKH, P2WSH, P2SH and P2SH-P2WSH 2-of-3 multisig and
+  P2TR key-path. P2TR script-path, annex and large mainnet transactions are added by hand.
+
+  Every run uses fresh keys, so signatures can change length by a byte and shift the
+  hand-derived numbers in tests. Pass -Only to write just the fixtures you need.
 
 .EXAMPLE
   ./scripts/record-fixtures.ps1
+
+.EXAMPLE
+  ./scripts/record-fixtures.ps1 -Only p2sh-multisig,p2sh-p2wsh-multisig
 #>
 param(
     [string]$BitcoinBin = 'C:\Program Files\Bitcoin\daemon',
-    [string]$OutDir = (Join-Path (Split-Path $PSScriptRoot) 'crates\pqweight\tests\fixtures')
+    [string]$OutDir = (Join-Path (Split-Path $PSScriptRoot) 'crates\pqweight\tests\fixtures'),
+    # Fixture names to write; every fixture when empty.
+    [string[]]$Only = @()
 )
 
 $ErrorActionPreference = 'Stop'
@@ -66,6 +74,7 @@ function Invoke-RpcJson {
 
 function Write-Fixture {
     param([string]$Name, [string]$Description, [string]$Hex, $Decoded, [string]$CoreVersion)
+    if ($Only.Count -gt 0 -and $Name -notin $Only) { return }
     $meta = [ordered]@{
         description  = $Description
         oracle       = [ordered]@{
@@ -103,7 +112,7 @@ try {
     $minerAddress = (Invoke-Rpc 'getnewaddress').Trim()
     Invoke-Rpc 'generatetoaddress' @('nblocks=101', "address=$minerAddress") | Out-Null
 
-    # Build a 2-of-3 P2WSH multisig from keys the wallet already owns, so it can sign.
+    # Build 2-of-3 multisigs from keys the wallet already owns, so it can sign.
     $descriptors = (Invoke-RpcJson 'listdescriptors' @('private=true')).descriptors
     $wpkh = $descriptors | Where-Object { $_.desc -like 'wpkh(*' -and -not $_.internal } | Select-Object -First 1
     if ($wpkh.desc -notmatch '^wpkh\((.+)/0/\*\)#') { throw "unexpected descriptor shape: $($wpkh.desc)" }
@@ -121,6 +130,8 @@ try {
     }
 
     $multisigAddress = Import-PrivateDescriptor "wsh(multi(2,$base/10/0,$base/11/0,$base/12/0))"
+    $p2shMultisigAddress = Import-PrivateDescriptor "sh(multi(2,$base/14/0,$base/15/0,$base/16/0))"
+    $p2shP2wshMultisigAddress = Import-PrivateDescriptor "sh(wsh(multi(2,$base/17/0,$base/18/0,$base/19/0)))"
     # BIP-341's provably unspendable internal key, so only the script path can spend.
     $nums = '50929b74c1a04954b78b4b6035e97a5e078a5a0f28ec96d547bfee9ace803ac0'
     $scriptPathAddress = Import-PrivateDescriptor "tr($nums,pk($base/13/0))"
@@ -130,6 +141,8 @@ try {
         @{ Name = 'p2wpkh';      Description = 'Native segwit P2WPKH spend, 1 input, 1 output';           Address = (Invoke-Rpc 'getnewaddress' @('address_type=bech32')).Trim() },
         @{ Name = 'p2sh-p2wpkh'; Description = 'Wrapped segwit P2SH-P2WPKH spend, 1 input, 1 output';    Address = (Invoke-Rpc 'getnewaddress' @('address_type=p2sh-segwit')).Trim() },
         @{ Name = 'p2wsh-multisig'; Description = 'P2WSH 2-of-3 multisig spend, 1 input, 1 output';      Address = $multisigAddress },
+        @{ Name = 'p2sh-multisig'; Description = 'Legacy P2SH 2-of-3 multisig spend, 1 input, 1 output';  Address = $p2shMultisigAddress },
+        @{ Name = 'p2sh-p2wsh-multisig'; Description = 'Wrapped segwit P2SH-P2WSH 2-of-3 multisig spend, 1 input, 1 output'; Address = $p2shP2wshMultisigAddress },
         @{ Name = 'p2tr-keypath'; Description = 'Taproot key-path spend, 1 input, 1 output';             Address = (Invoke-Rpc 'getnewaddress' @('address_type=bech32m')).Trim() },
         @{ Name = 'p2tr-scriptpath'; Description = 'Taproot script-path spend (single pk leaf, unspendable internal key), 1 input, 1 output'; Address = $scriptPathAddress }
     )

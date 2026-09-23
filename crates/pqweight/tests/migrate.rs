@@ -7,7 +7,9 @@
 mod common;
 
 use common::{decode_hex, fixtures_dir};
-use pqweight::{BaselineSpendType, InputResult, ParameterSet, migrate, transaction_weight};
+use pqweight::{
+    BaselineSpendType, InputResult, MultisigThreshold, ParameterSet, migrate, transaction_weight,
+};
 use proptest::prelude::*;
 
 fn load_fixture(name: &str) -> Vec<u8> {
@@ -17,8 +19,8 @@ fn load_fixture(name: &str) -> Vec<u8> {
 }
 
 /// A segwit transaction with one input per `(script_sig, witness)` pair given,
-/// and one output. Contents are filler; only sizes matter. All lengths must be
-/// below 253.
+/// and one output. Contents are filler; only sizes matter. scriptSigs and item
+/// counts must be below 253; witness items may be longer.
 fn segwit_tx_with_inputs(inputs: &[(&[u8], &[&[u8]])]) -> Vec<u8> {
     let mut tx = Vec::new();
     tx.extend_from_slice(&2u32.to_le_bytes()); // version
@@ -36,12 +38,86 @@ fn segwit_tx_with_inputs(inputs: &[(&[u8], &[&[u8]])]) -> Vec<u8> {
     for (_, witness) in inputs {
         tx.push(u8::try_from(witness.len()).expect("few items"));
         for item in *witness {
-            tx.push(u8::try_from(item.len()).expect("short item"));
+            push_compact_size(&mut tx, item.len());
             tx.extend_from_slice(item);
         }
     }
     tx.extend_from_slice(&0u32.to_le_bytes()); // locktime
     tx
+}
+
+/// Appends `len` as a Bitcoin compact-size integer (1 or 3 bytes here).
+fn push_compact_size(tx: &mut Vec<u8>, len: usize) {
+    match u8::try_from(len) {
+        Ok(short) if short < 0xfd => tx.push(short),
+        _ => {
+            tx.push(0xfd);
+            tx.extend_from_slice(&u16::try_from(len).expect("item under 64 KiB").to_le_bytes());
+        }
+    }
+}
+
+/// `<m> <n keys> <n> OP_CHECKMULTISIG`, each key a direct push. `m` and `n`
+/// are raw script bytes so tests can build malformed scripts.
+fn multisig_script(m: &[u8], keys: &[&[u8]], n: &[u8]) -> Vec<u8> {
+    let mut script = m.to_vec();
+    for key in keys {
+        script.push(u8::try_from(key.len()).expect("direct-push length"));
+        script.extend_from_slice(key);
+    }
+    script.extend_from_slice(n);
+    script.push(0xae);
+    script
+}
+
+/// A script number as a minimal push: `OP_1` to `OP_16`, or a 1-byte push of
+/// the value above 16.
+fn op_n(n: u8) -> Vec<u8> {
+    match n {
+        1..=16 => vec![0x50 + n],
+        _ => vec![0x01, n],
+    }
+}
+
+/// A P2SH multisig scriptSig: `OP_0`, each signature as a direct push, then
+/// `script` as a direct push or, above 75 bytes, `OP_PUSHDATA1`.
+fn p2sh_multisig_script_sig(signatures: &[&[u8]], script: &[u8]) -> Vec<u8> {
+    let mut script_sig = vec![0x00];
+    for signature in signatures {
+        script_sig.push(u8::try_from(signature.len()).expect("direct-push length"));
+        script_sig.extend_from_slice(signature);
+    }
+    let script_len = u8::try_from(script.len()).expect("script under 256 bytes");
+    if script_len > 0x4b {
+        script_sig.push(0x4c); // OP_PUSHDATA1
+    }
+    script_sig.push(script_len);
+    script_sig.extend_from_slice(script);
+    script_sig
+}
+
+/// A P2WSH m-of-n multisig spend with 33-byte keys and 72-byte signatures.
+fn p2wsh_multisig_tx(m: u8, n: u8) -> Vec<u8> {
+    multisig_witness_tx(&[], m, n)
+}
+
+/// The P2SH-P2WSH redeem script push: `0x22` then `0020<32-byte script hash>`.
+fn p2sh_p2wsh_redeem_script_push() -> Vec<u8> {
+    let mut push = vec![0x22, 0x00, 0x20];
+    push.extend_from_slice(&[0u8; 32]);
+    push
+}
+
+/// A spend with the given scriptSig and an m-of-n multisig witness with
+/// 33-byte keys and 72-byte signatures.
+fn multisig_witness_tx(script_sig: &[u8], m: u8, n: u8) -> Vec<u8> {
+    let key = [2u8; 33];
+    let signature = [0u8; 72];
+    let script = multisig_script(&op_n(m), &vec![&key[..]; usize::from(n)], &op_n(n));
+    let mut witness: Vec<&[u8]> = vec![&[]];
+    witness.extend(vec![&signature[..]; usize::from(m)]);
+    witness.push(&script);
+    segwit_tx(script_sig, &witness)
 }
 
 /// One-input, one-output segwit transaction with the given scriptSig and witness
@@ -60,12 +136,18 @@ fn legacy_tx(pushes: &[&[u8]]) -> Vec<u8> {
         script_sig.extend_from_slice(push);
     }
 
+    legacy_tx_with_script_sig(&script_sig)
+}
+
+/// One-input, one-output legacy (non-segwit) transaction with the given raw
+/// scriptSig. Contents are filler; only sizes matter.
+fn legacy_tx_with_script_sig(script_sig: &[u8]) -> Vec<u8> {
     let mut tx = Vec::new();
     tx.extend_from_slice(&1u32.to_le_bytes()); // version
     tx.push(1); // input count
     tx.extend_from_slice(&[0u8; 36]); // prevout
-    tx.push(u8::try_from(script_sig.len()).expect("short scriptSig"));
-    tx.extend_from_slice(&script_sig);
+    push_compact_size(&mut tx, script_sig.len());
+    tx.extend_from_slice(script_sig);
     tx.extend_from_slice(&[0xff; 4]); // sequence
     tx.push(1); // output count
     tx.extend_from_slice(&0u64.to_le_bytes()); // value
@@ -264,6 +346,400 @@ fn p2pkh_input_is_migrated_to_an_ml_dsa_44_witness() {
     let total = migration.migrated.expect("every input is mapped");
     assert_eq!(total.weight, 4069);
     assert_eq!(total.vsize, 1018);
+}
+
+#[test]
+fn p2wsh_multisig_input_is_migrated_with_every_public_key_in_the_script() {
+    let tx = load_fixture("p2wsh-multisig");
+
+    let migration = migrate(&tx, ParameterSet::MlDsa44).expect("valid transaction");
+
+    // ML-DSA-44 2-of-3 witness [dummy, sig, sig, script]:
+    //   item count 1 + dummy 1 (empty item, just its 0x00 length)
+    //   + 2 signatures x (3-byte length prefix + 2420) = 4846
+    //   + script: OP_2 1 + 3 keys x (OP_PUSHDATA2 3 + 1312) + OP_3 1
+    //     + OP_CHECKMULTISIG 1 = 3948, plus its 3-byte length prefix = 3951
+    //   = 1 + 1 + 4846 + 3951 = 8799 bytes = 8799 WU.
+    // Non-witness part: empty scriptSig, 32 + 4 + 1 + 4 = 41 bytes = 164 WU.
+    // Input template weight: 164 + 8799 = 8963 WU.
+    assert_eq!(
+        migration.inputs,
+        vec![InputResult::Mapped {
+            spend_type: BaselineSpendType::P2wshMultisig(MultisigThreshold { m: 2, n: 3 }),
+            template_weight: 8963,
+        }]
+    );
+
+    // Baseline witness from the fixture: count 1 + dummy 1 + two 71-byte
+    // signatures with 1-byte prefixes (72 each) + 105-byte script with a 1-byte
+    // prefix (106) = 252 bytes. Stripped size (82) and marker are unchanged, so
+    // migrated weight = 582 (Oracle) - 252 + 8799 = 9129 WU, vsize ceil(9129 / 4) = 2283.
+    let total = migration.migrated.expect("every input is mapped");
+    assert_eq!(total.weight, 9129);
+    assert_eq!(total.vsize, 2283);
+}
+
+#[test]
+fn p2wsh_multisig_with_slh_dsa_pushes_its_small_keys_directly() {
+    let tx = load_fixture("p2wsh-multisig");
+
+    let migration = migrate(&tx, ParameterSet::SlhDsa128s).expect("valid transaction");
+
+    // SLH-DSA-128s 2-of-3 witness: signatures 7856 bytes, keys 32 bytes.
+    //   item count 1 + dummy 1
+    //   + 2 signatures x (3-byte length prefix + 7856) = 15718
+    //   + script: OP_2 1 + 3 keys x (direct push 1 + 32) + OP_3 1
+    //     + OP_CHECKMULTISIG 1 = 102, plus its 1-byte length prefix = 103
+    //   = 1 + 1 + 15718 + 103 = 15823 WU.
+    // Input template weight: 164 (non-witness) + 15823 = 15987 WU.
+    assert_eq!(
+        migration.inputs,
+        vec![InputResult::Mapped {
+            spend_type: BaselineSpendType::P2wshMultisig(MultisigThreshold { m: 2, n: 3 }),
+            template_weight: 15987,
+        }]
+    );
+}
+
+#[test]
+fn p2wsh_multisig_is_recognised_for_thresholds_from_1_of_1_to_20_of_20() {
+    for (m, n) in [
+        (1, 1),
+        (1, 2),
+        (3, 5),
+        (15, 15),
+        (16, 16),
+        (1, 17),
+        (17, 20),
+        (20, 20),
+    ] {
+        let tx = p2wsh_multisig_tx(m, n);
+
+        assert!(
+            is_mapped_as(
+                &tx,
+                BaselineSpendType::P2wshMultisig(MultisigThreshold { m, n })
+            ),
+            "{m}-of-{n}"
+        );
+    }
+}
+
+#[test]
+fn p2wsh_multisig_3_of_5_template_weight() {
+    let tx = p2wsh_multisig_tx(3, 5);
+
+    let migration = migrate(&tx, ParameterSet::MlDsa44).expect("valid transaction");
+
+    // ML-DSA-44 3-of-5 witness:
+    //   item count 1 + dummy 1 + 3 x (3 + 2420) = 7269
+    //   + script: 1 + 5 x (3 + 1312) + 1 + 1 = 6578, plus 3-byte prefix = 6581
+    //   = 1 + 1 + 7269 + 6581 = 13852 WU.
+    // Input template weight: 164 + 13852 = 14016 WU.
+    assert_eq!(
+        migration.inputs,
+        vec![InputResult::Mapped {
+            spend_type: BaselineSpendType::P2wshMultisig(MultisigThreshold { m: 3, n: 5 }),
+            template_weight: 14016,
+        }]
+    );
+}
+
+#[test]
+fn p2wsh_multisig_above_16_keys_keeps_its_2_byte_number_push() {
+    let tx = p2wsh_multisig_tx(1, 20);
+
+    let migration = migrate(&tx, ParameterSet::MlDsa44).expect("valid transaction");
+
+    // ML-DSA-44 1-of-20 witness. 20 is above OP_16, so the script pushes it as
+    // 0x01 0x14 (2 bytes) and the literal swap keeps that encoding.
+    //   item count 1 + dummy 1 + 1 x (3 + 2420) = 2423
+    //   + script: OP_1 1 + 20 x (3 + 1312) + 2 + 1 = 26304, plus 3-byte prefix = 26307
+    //   = 1 + 1 + 2423 + 26307 = 28732 WU.
+    // Input template weight: 164 + 28732 = 28896 WU.
+    assert_eq!(
+        migration.inputs,
+        vec![InputResult::Mapped {
+            spend_type: BaselineSpendType::P2wshMultisig(MultisigThreshold { m: 1, n: 20 }),
+            template_weight: 28896,
+        }]
+    );
+}
+
+#[test]
+fn p2wsh_multisig_numbers_must_be_minimally_encoded_and_at_most_20() {
+    let key = [2u8; 33];
+    let signature = [0u8; 72];
+    let sigs_and_script = |m: &[u8], n_keys: usize, n: &[u8], n_sigs: usize| {
+        let script = multisig_script(m, &vec![&key[..]; n_keys], n);
+        let mut witness: Vec<Vec<u8>> = vec![vec![]];
+        witness.extend(vec![signature.to_vec(); n_sigs]);
+        witness.push(script);
+        witness
+    };
+
+    let non_minimal_m = sigs_and_script(&[0x01, 0x02], 3, &op_n(3), 2);
+    let twenty_one_keys = sigs_and_script(&op_n(1), 21, &[0x01, 21], 1);
+    let zero_of_one = sigs_and_script(&[0x00], 1, &op_n(1), 0);
+
+    for (name, witness) in [
+        ("m pushed as 0x01 0x02", non_minimal_m),
+        ("21 keys", twenty_one_keys),
+        ("0-of-1", zero_of_one),
+    ] {
+        let items: Vec<&[u8]> = witness.iter().map(Vec::as_slice).collect();
+        let tx = segwit_tx(&[], &items);
+        let migration = migrate(&tx, ParameterSet::MlDsa44).expect("valid transaction");
+        assert_eq!(migration.inputs, vec![InputResult::Unmapped], "{name}");
+    }
+}
+
+#[test]
+fn p2wsh_multisig_near_misses_are_unmapped() {
+    let key = [2u8; 33];
+    let keys: &[&[u8]] = &[&key, &key, &key];
+    let signature = [0u8; 72];
+    let script_2_of_3 = multisig_script(&op_n(2), keys, &op_n(3));
+
+    let too_few_signatures = segwit_tx(&[], &[&[], &signature, &script_2_of_3]);
+    let too_many_signatures = segwit_tx(
+        &[],
+        &[&[], &signature, &signature, &signature, &script_2_of_3],
+    );
+    let non_empty_dummy = segwit_tx(&[], &[&[0u8], &signature, &signature, &script_2_of_3]);
+    let empty_signature = segwit_tx(&[], &[&[], &signature, &[], &script_2_of_3]);
+    let short_signature = segwit_tx(&[], &[&[], &signature, &[0u8; 69], &script_2_of_3]);
+    let extra_opcode = {
+        let mut script = script_2_of_3.clone();
+        script.push(0x75); // OP_DROP after OP_CHECKMULTISIG
+        segwit_tx(&[], &[&[], &signature, &signature, &script])
+    };
+    let m_greater_than_n = {
+        let script = multisig_script(&op_n(4), keys, &op_n(3));
+        segwit_tx(
+            &[],
+            &[&[], &signature, &signature, &signature, &signature, &script],
+        )
+    };
+    let n_does_not_match_key_count = {
+        let script = multisig_script(&op_n(2), keys, &op_n(4));
+        segwit_tx(&[], &[&[], &signature, &signature, &script])
+    };
+    let uncompressed_key = {
+        let big = [4u8; 65];
+        let script = multisig_script(&op_n(2), &[&key, &key, &big], &op_n(3));
+        segwit_tx(&[], &[&[], &signature, &signature, &script])
+    };
+    let not_checkmultisig = {
+        // OP_2 <keys> OP_3 OP_CHECKMULTISIGVERIFY (0xaf): a different opcode.
+        let mut script = script_2_of_3.clone();
+        *script.last_mut().expect("non-empty") = 0xaf;
+        segwit_tx(&[], &[&[], &signature, &signature, &script])
+    };
+    let with_script_sig = segwit_tx(&[0x51], &[&[], &signature, &signature, &script_2_of_3]);
+    let timelock_script = {
+        // <1> OP_CHECKSEQUENCEVERIFY OP_DROP <key> OP_CHECKSIG: a single-key
+        // timelocked script, not multisig.
+        let mut script = vec![0x51, 0xb2, 0x75, 0x21];
+        script.extend_from_slice(&key);
+        script.push(0xac);
+        segwit_tx(&[], &[&signature, &script])
+    };
+
+    for (name, tx) in [
+        ("too few signatures", too_few_signatures),
+        ("too many signatures", too_many_signatures),
+        ("non-empty dummy", non_empty_dummy),
+        ("0-byte signature", empty_signature),
+        ("69-byte signature", short_signature),
+        ("extra opcode", extra_opcode),
+        ("m > n", m_greater_than_n),
+        ("n does not match key count", n_does_not_match_key_count),
+        ("uncompressed key", uncompressed_key),
+        ("OP_CHECKMULTISIGVERIFY", not_checkmultisig),
+        ("non-empty scriptSig", with_script_sig),
+        ("timelock script", timelock_script),
+    ] {
+        let migration = migrate(&tx, ParameterSet::MlDsa44).expect("valid transaction");
+        assert_eq!(migration.inputs, vec![InputResult::Unmapped], "{name}");
+    }
+}
+
+#[test]
+fn p2sh_p2wsh_multisig_is_migrated_keeping_the_redeem_script_scriptsig() {
+    let tx = load_fixture("p2sh-p2wsh-multisig");
+
+    let migration = migrate(&tx, ParameterSet::MlDsa44).expect("valid transaction");
+
+    // Witness: 8799 WU, the same 2-of-3 ML-DSA-44 witness as the P2WSH case.
+    // Non-witness part: scriptSig is unchanged, a 0x22 push opcode plus the
+    // 34-byte 0020<32-byte hash> redeem script = 35 bytes, with a 1-byte length
+    // prefix: 32 + 4 + 1 + 35 + 4 = 76 bytes = 304 WU.
+    // Input template weight: 304 + 8799 = 9103 WU.
+    assert_eq!(
+        migration.inputs,
+        vec![InputResult::Mapped {
+            spend_type: BaselineSpendType::P2shP2wshMultisig(MultisigThreshold { m: 2, n: 3 }),
+            template_weight: 9103,
+        }]
+    );
+
+    // Oracle: weight 722, size 371, so stripped size (722 - 371) / 3 = 117 and
+    // the baseline witness is 371 - 117 - 2 (marker, flag) = 252 bytes.
+    // Migrated: stripped 117 unchanged, total 117 + 2 + 8799 = 8918,
+    // weight 3 x 117 + 8918 = 9269 WU, vsize ceil(9269 / 4) = 2318.
+    let total = migration.migrated.expect("every input is mapped");
+    assert_eq!(total.weight, 9269);
+    assert_eq!(total.vsize, 2318);
+}
+
+#[test]
+fn p2sh_p2wsh_multisig_requires_the_0020_redeem_script_push() {
+    // A 0014 (P2WPKH) program, and a 0020 program one byte short.
+    let wrong_program = {
+        let mut push = vec![0x16, 0x00, 0x14];
+        push.extend_from_slice(&[0u8; 20]);
+        push
+    };
+    let short_hash = {
+        let mut push = vec![0x21, 0x00, 0x20];
+        push.extend_from_slice(&[0u8; 31]);
+        push
+    };
+
+    for script_sig in [wrong_program, short_hash] {
+        let tx = multisig_witness_tx(&script_sig, 2, 3);
+        let migration = migrate(&tx, ParameterSet::MlDsa44).expect("valid transaction");
+        assert_eq!(migration.inputs, vec![InputResult::Unmapped]);
+    }
+}
+
+#[test]
+fn p2sh_multisig_moves_signatures_and_script_into_the_witness() {
+    let tx = load_fixture("p2sh-multisig");
+
+    let migration = migrate(&tx, ParameterSet::MlDsa44).expect("valid transaction");
+
+    // Witness: 8799 WU, the same 2-of-3 ML-DSA-44 witness as the P2WSH case.
+    // Non-witness part: scriptSig becomes empty, 41 bytes = 164 WU.
+    // Input template weight: 164 + 8799 = 8963 WU.
+    assert_eq!(
+        migration.inputs,
+        vec![InputResult::Mapped {
+            spend_type: BaselineSpendType::P2shMultisig(MultisigThreshold { m: 2, n: 3 }),
+            template_weight: 8963,
+        }]
+    );
+
+    // Oracle: size 334, all stripped (no witness). The fixture's scriptSig is
+    // 0xfc = 252 bytes (OP_0, two 71-byte signatures with 1-byte pushes, and the
+    // 105-byte script behind OP_PUSHDATA1 0x69), after a 1-byte length prefix
+    // that stays as 0x00. Migrated stripped size: 334 - 252 = 82. The
+    // transaction gains the 2-byte marker and flag: total 82 + 2 + 8799 = 8883,
+    // weight 3 x 82 + 8883 = 9129 WU, vsize ceil(9129 / 4) = 2283.
+    let total = migration.migrated.expect("every input is mapped");
+    assert_eq!(total.weight, 9129);
+    assert_eq!(total.vsize, 2283);
+}
+
+#[test]
+fn p2sh_multisig_accepts_uncompressed_and_mixed_key_sizes() {
+    let compressed = [2u8; 33];
+    let uncompressed = [4u8; 65];
+    let signature = [0u8; 72];
+    let script = multisig_script(&op_n(1), &[&compressed, &uncompressed], &op_n(2));
+    let tx = legacy_tx_with_script_sig(&p2sh_multisig_script_sig(&[&signature], &script));
+
+    assert!(is_mapped_as(
+        &tx,
+        BaselineSpendType::P2shMultisig(MultisigThreshold { m: 1, n: 2 })
+    ));
+}
+
+#[test]
+fn p2sh_multisig_near_misses_are_unmapped() {
+    let key = [2u8; 33];
+    let signature = [0u8; 72];
+    let script = multisig_script(&op_n(2), &[&key, &key, &key], &op_n(3));
+    let valid = p2sh_multisig_script_sig(&[&signature, &signature], &script);
+
+    // Dummy pushed as one byte instead of OP_0.
+    let non_empty_dummy = {
+        let mut script_sig = vec![0x01, 0x00];
+        script_sig.extend_from_slice(&valid[1..]);
+        script_sig
+    };
+    // A non-push opcode (OP_DUP) before the signatures.
+    let non_push_opcode = {
+        let mut script_sig = vec![0x76];
+        script_sig.extend_from_slice(&valid);
+        script_sig
+    };
+    // One signature short of m.
+    let too_few_signatures = p2sh_multisig_script_sig(&[&signature], &script);
+
+    for (name, script_sig) in [
+        ("non-empty dummy", non_empty_dummy),
+        ("non-push opcode", non_push_opcode),
+        ("too few signatures", too_few_signatures),
+    ] {
+        let tx = legacy_tx_with_script_sig(&script_sig);
+        let migration = migrate(&tx, ParameterSet::MlDsa44).expect("valid transaction");
+        assert_eq!(migration.inputs, vec![InputResult::Unmapped], "{name}");
+    }
+
+    // A P2SH-shaped scriptSig alongside a non-empty witness is not a legacy
+    // P2SH spend. Items are kept under 253 bytes for the segwit builder.
+    let short_script = multisig_script(&op_n(1), &[&key], &op_n(1));
+    let short_script_sig = p2sh_multisig_script_sig(&[&signature], &short_script);
+    let with_witness = segwit_tx(&short_script_sig, &[&signature]);
+    let migration = migrate(&with_witness, ParameterSet::MlDsa44).expect("valid transaction");
+    assert_eq!(
+        migration.inputs,
+        vec![InputResult::Unmapped],
+        "with witness"
+    );
+}
+
+fn mentions(assumptions: &[&str], needles: &[&str]) -> bool {
+    assumptions
+        .iter()
+        .any(|a| needles.iter().all(|needle| a.contains(needle)))
+}
+
+#[test]
+fn multisig_inputs_state_the_script_limit_and_checkmultisig_layout_assumptions() {
+    let tx = load_fixture("p2wsh-multisig");
+
+    let migration = migrate(&tx, ParameterSet::MlDsa44).expect("valid transaction");
+
+    let assumptions = &migration.assumptions;
+    assert!(mentions(assumptions, &["10,000-byte script", "soft fork"]));
+    assert!(mentions(assumptions, &["OP_CHECKMULTISIG", "dummy"]));
+    // P2WSH has no scriptSig to move, so the P2SH assumption doesn't apply.
+    assert!(!mentions(assumptions, &["P2SH"]));
+}
+
+#[test]
+fn p2sh_multisig_inputs_state_that_the_script_moves_into_the_witness() {
+    let key = [2u8; 33];
+    let signature = [0u8; 72];
+    let script = multisig_script(&op_n(1), &[&key], &op_n(1));
+    let tx = legacy_tx_with_script_sig(&p2sh_multisig_script_sig(&[&signature], &script));
+
+    let migration = migrate(&tx, ParameterSet::MlDsa44).expect("valid transaction");
+
+    assert!(mentions(&migration.assumptions, &["P2SH", "witness"]));
+}
+
+#[test]
+fn single_key_migrations_do_not_state_multisig_assumptions() {
+    let tx = load_fixture("p2wpkh");
+
+    let migration = migrate(&tx, ParameterSet::MlDsa44).expect("valid transaction");
+
+    assert!(!mentions(&migration.assumptions, &["OP_CHECKMULTISIG"]));
+    assert!(!mentions(&migration.assumptions, &["10,000-byte script"]));
 }
 
 #[test]
@@ -475,7 +951,7 @@ fn compact_size_weight(value: u64) -> u64 {
     if value <= 0xfc { 1 } else { 3 }
 }
 
-/// A single-input transaction of one of the four mapped Baseline spend types,
+/// A single-input transaction of one of the mapped Baseline spend types,
 /// paired with an independently computed upper bound on how much weight
 /// migration could possibly remove: what the original signature and public key
 /// cost today, in the unit (witness at 1 WU/byte, scriptSig at 4 WU/byte) they
@@ -530,11 +1006,48 @@ fn mapped_tx_with_removable_weight() -> impl Strategy<Value = (Vec<u8>, u64)> {
             (tx, removable)
         });
 
+    // m-of-n with 1 <= m <= n <= 16; the whole baseline witness is removable.
+    let witness_multisig_strategy =
+        (1u8..=16, 0u8..16, any::<bool>()).prop_map(|(n, m_offset, wrapped)| {
+            let m = 1 + m_offset % n;
+            let script_sig = if wrapped {
+                p2sh_p2wsh_redeem_script_push()
+            } else {
+                Vec::new()
+            };
+            let tx = multisig_witness_tx(&script_sig, m, n);
+            // Items as built by multisig_witness_tx: empty dummy, m 72-byte
+            // signatures, and the script of n 34-byte key pushes plus 3 opcodes.
+            let script_len = 3 + 34 * u64::from(n);
+            let removable = compact_size_weight(u64::from(m) + 2)
+                + 1
+                + u64::from(m) * (1 + 72)
+                + compact_size_weight(script_len)
+                + script_len;
+            (tx, removable)
+        });
+
+    // Legacy P2SH m-of-n with n <= 7 so the script fits one OP_PUSHDATA1; the
+    // whole scriptSig and its length prefix are removable, at 4 WU/byte.
+    let p2sh_multisig_strategy = (1u8..=7, 0u8..7).prop_map(|(n, m_offset)| {
+        let m = 1 + m_offset % n;
+        let key = [2u8; 33];
+        let signature = [0u8; 72];
+        let script = multisig_script(&op_n(m), &vec![&key[..]; usize::from(n)], &op_n(n));
+        let script_sig = p2sh_multisig_script_sig(&vec![&signature[..]; usize::from(m)], &script);
+        let script_sig_len = script_sig.len() as u64;
+        let tx = legacy_tx_with_script_sig(&script_sig);
+        let removable = 4 * (compact_size_weight(script_sig_len) + script_sig_len);
+        (tx, removable)
+    });
+
     prop_oneof![
         native_segwit_strategy,
         taproot_key_path_strategy,
         wrapped_segwit_strategy,
-        legacy_strategy
+        legacy_strategy,
+        witness_multisig_strategy,
+        p2sh_multisig_strategy
     ]
 }
 

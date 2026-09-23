@@ -2,8 +2,8 @@ use std::io::Read;
 use std::process::ExitCode;
 
 use pqweight::{
-    AggregateResult, BaselineSpendType, FeeRate, InputResult, Migration, ParameterSet, aggregate,
-    fee,
+    AggregateResult, BaselineSpendType, FeeRate, InputResult, Migration, MultisigThreshold,
+    ParameterSet, aggregate, fee,
 };
 
 fn main() -> ExitCode {
@@ -180,6 +180,17 @@ fn spend_type_name(spend_type: BaselineSpendType) -> &'static str {
         BaselineSpendType::P2shP2wpkh => "P2SH-P2WPKH",
         BaselineSpendType::P2pkh => "P2PKH",
         BaselineSpendType::PayToAnchor => "pay-to-anchor",
+        BaselineSpendType::P2wshMultisig(_) => "P2WSH multisig",
+        BaselineSpendType::P2shP2wshMultisig(_) => "P2SH-P2WSH multisig",
+        BaselineSpendType::P2shMultisig(_) => "P2SH multisig",
+    }
+}
+
+/// The spend type's name with its threshold, such as `P2WSH multisig 2-of-3`.
+fn spend_type_label(spend_type: BaselineSpendType) -> String {
+    match spend_type.threshold() {
+        Some(MultisigThreshold { m, n }) => format!("{} {m}-of-{n}", spend_type_name(spend_type)),
+        None => spend_type_name(spend_type).to_string(),
     }
 }
 
@@ -192,7 +203,7 @@ fn migrate_human(migration: &Migration, baseline_vsize: u64, fee_rate: Option<Fe
                 template_weight,
             } => format!(
                 "input {i}: mapped ({}), weight: {template_weight}",
-                spend_type_name(*spend_type)
+                spend_type_label(*spend_type)
             ),
             InputResult::Unmapped => format!("input {i}: unmapped"),
         });
@@ -245,10 +256,18 @@ fn migrate_json(migration: &Migration, baseline_vsize: u64, fee_rate: Option<Fee
             InputResult::Mapped {
                 spend_type,
                 template_weight,
-            } => format!(
-                r#"{{"status":"mapped","spend_type":"{}","template_weight":{template_weight}}}"#,
-                spend_type_name(*spend_type)
-            ),
+            } => {
+                let threshold = match spend_type.threshold() {
+                    Some(MultisigThreshold { m, n }) => {
+                        format!(r#","threshold":{{"m":{m},"n":{n}}}"#)
+                    }
+                    None => String::new(),
+                };
+                format!(
+                    r#"{{"status":"mapped","spend_type":"{}"{threshold},"template_weight":{template_weight}}}"#,
+                    spend_type_name(*spend_type)
+                )
+            }
             InputResult::Unmapped => r#"{"status":"unmapped"}"#.to_string(),
         })
         .collect();

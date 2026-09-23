@@ -1,0 +1,10 @@
+{
+    "description":  "Legacy P2SH 2-of-3 multisig spend, 1 input, 1 output",
+    "oracle":  {
+                   "weight":  1336,
+                   "vsize":  334,
+                   "size":  334
+               },
+    "core_version":  "Satoshi:31.1.0",
+    "recorded_by":  "scripts/record-fixtures.ps1"
+}

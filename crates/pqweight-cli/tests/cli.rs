@@ -15,10 +15,15 @@ struct Fixture {
 }
 
 fn p2wpkh_fixture() -> Fixture {
+    fixture("p2wpkh")
+}
+
+fn fixture(name: &str) -> Fixture {
     let dir = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../pqweight/tests/fixtures");
-    let hex = std::fs::read_to_string(dir.join("p2wpkh.hex")).unwrap();
+    let hex = std::fs::read_to_string(dir.join(format!("{name}.hex"))).unwrap();
     let meta: serde_json::Value =
-        serde_json::from_str(&std::fs::read_to_string(dir.join("p2wpkh.json")).unwrap()).unwrap();
+        serde_json::from_str(&std::fs::read_to_string(dir.join(format!("{name}.json"))).unwrap())
+            .unwrap();
     Fixture {
         hex: hex.trim().to_string(),
         weight: meta["oracle"]["weight"].as_u64().unwrap(),
@@ -179,6 +184,53 @@ fn migrate_command_json_flag_prints_machine_readable_output() {
             .is_some_and(|a| !a.is_empty())
     );
     assert_eq!(json["inputs"][0]["spend_type"], "P2WPKH");
+}
+
+#[test]
+fn migrate_command_names_a_multisig_input_with_its_threshold() {
+    let fx = fixture("p2wsh-multisig");
+
+    let output = run(&["migrate", "--scheme", "ml-dsa-44", &fx.hex], None);
+
+    assert!(output.status.success(), "{}", stderr(&output));
+    let text = stdout(&output);
+    // Template weight hand-derived in pqweight::tests::migrate::
+    // p2wsh_multisig_input_is_migrated_with_every_public_key_in_the_script.
+    assert!(
+        text.contains("input 0: mapped (P2WSH multisig 2-of-3), weight: 8963"),
+        "{text}"
+    );
+}
+
+#[test]
+fn migrate_command_json_reports_the_multisig_threshold_as_its_own_object() {
+    let fx = fixture("p2wsh-multisig");
+
+    let output = run(
+        &["migrate", "--scheme", "ml-dsa-44", "--json", &fx.hex],
+        None,
+    );
+
+    assert!(output.status.success(), "{}", stderr(&output));
+    let json: serde_json::Value = serde_json::from_str(&stdout(&output)).expect("valid JSON");
+    let input = &json["inputs"][0];
+    assert_eq!(input["spend_type"], "P2WSH multisig");
+    assert_eq!(input["threshold"]["m"], 2);
+    assert_eq!(input["threshold"]["n"], 3);
+    assert_eq!(input["template_weight"], 8963);
+}
+
+#[test]
+fn migrate_command_json_has_no_threshold_for_a_single_key_input() {
+    let fx = p2wpkh_fixture();
+
+    let output = run(
+        &["migrate", "--scheme", "ml-dsa-44", "--json", &fx.hex],
+        None,
+    );
+
+    let json: serde_json::Value = serde_json::from_str(&stdout(&output)).expect("valid JSON");
+    assert!(json["inputs"][0].get("threshold").is_none());
 }
 
 #[test]
