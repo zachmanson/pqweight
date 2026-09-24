@@ -1,4 +1,4 @@
-Status: ready-for-agent
+Status: done
 
 # Aggregate migration over many transactions (slice 2)
 
