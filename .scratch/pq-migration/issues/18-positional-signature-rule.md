@@ -1,8 +1,8 @@
-Status: needs-triage
+Status: wontfix
 
 # Positional signature rule for script-path stacks
 
-Blocked by: 08
+Reopen if: ticket 08 finds such stacks
 
 ## Problem Statement
 
@@ -19,3 +19,7 @@ Slice 5's single-key leaf template finds the signature by size: a 64 or 65-byte 
 ## Source
 
 Ticket 05 (Out of Scope and acceptance 2).
+
+## Comments
+
+**2026-09-24, wontfix.** The coverage report's "After slice 5" section says the size rule "turned away no inputs" in the September 2026 sample, and the size rule is simpler than tracking stack positions. Reopen if ticket 08's sample finds script-path stacks with more than one 64 or 65-byte item.

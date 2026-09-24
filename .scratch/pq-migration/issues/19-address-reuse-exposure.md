@@ -1,4 +1,4 @@
-Status: needs-triage
+Status: wontfix
 
 # Measure the address-reuse blind spot in Key exposure
 
@@ -18,3 +18,7 @@ Slice 7 tags Key exposure from each input's own data. A coin whose address was r
 ## Source
 
 Ticket 07 (decisions 3 and 9).
+
+## Comments
+
+**2026-09-24, wontfix.** Measuring it needs chain history from outside the transaction, and the spec rules out fetching data from a node at runtime. The lower-bound caveat is already in CONTEXT.md and the coverage report. If a number is wanted, quoting a published address-reuse estimate in the coverage report is enough.

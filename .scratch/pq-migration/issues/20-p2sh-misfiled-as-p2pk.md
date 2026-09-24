@@ -1,4 +1,4 @@
-Status: needs-triage
+Status: wontfix
 
 # P2SH spends misfiled as P2PK
 
@@ -17,3 +17,7 @@ Slice 7 recognizes P2PK from the spending side: a scriptSig that is a single str
 ## Source
 
 Ticket 07 (coverage report Assumptions edit).
+
+## Comments
+
+**2026-09-24, wontfix.** A P2SH redeem script that is itself a valid strict-DER signature is not a script anyone would realistically use. Slice 7 already documents the case in the coverage report's Assumptions list, and that is enough. Reopen if ticket 08 finds a case.
