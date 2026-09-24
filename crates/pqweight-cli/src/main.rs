@@ -262,6 +262,8 @@ fn spend_type_name(spend_type: BaselineSpendType) -> &'static str {
         BaselineSpendType::P2shP2wshMultisig(_) => "P2SH-P2WSH multisig",
         BaselineSpendType::P2shMultisig(_) => "P2SH multisig",
         BaselineSpendType::P2trScriptPathSingleKey => "P2TR script-path single-key",
+        BaselineSpendType::P2wshContract => "P2WSH contract",
+        BaselineSpendType::P2shP2wshContract => "P2SH-P2WSH contract",
     }
 }
 

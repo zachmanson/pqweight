@@ -1,0 +1,10 @@
+{
+    "description":  "Mainnet spend of a Lightning anchor (<key> CHECKSIG IFDUP NOTIF 16 CSV ENDIF) with an empty signature as input 1, and another input 0, 2 inputs. Tx f46409fcbca95e4391f3732e999bde9561a96ab617f6acd9b3b5b9dd60ab4952, block 967209",
+    "oracle":  {
+                   "weight":  651,
+                   "vsize":  163,
+                   "size":  246
+               },
+    "core_version":  "Satoshi:31.1.0",
+    "recorded_by":  "bitcoin-tx -json (mainnet transaction added by hand)"
+}

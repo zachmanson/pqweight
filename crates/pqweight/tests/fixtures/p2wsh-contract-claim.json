@@ -1,0 +1,10 @@
+{
+    "description":  "Mainnet P2WSH spend of a two-key hashlock/CLTV contract (<key A> CHECKSIG NOTIF ... CLTV ELSE <key B> CHECKSIGVERIFY SIZE 32 EQUALVERIFY HASH160 <20> EQUAL ENDIF), claim branch [preimage, sig B, sig A, script], 1 input, 1 output. Tx 799ecb67f885316f22074ef0270ce5943fbd9dbca5bb0ae2b411099c917b232c, block 967209",
+    "oracle":  {
+                   "weight":  640,
+                   "vsize":  160,
+                   "size":  394
+               },
+    "core_version":  "Satoshi:31.1.0",
+    "recorded_by":  "bitcoin-tx -json (mainnet transaction added by hand)"
+}

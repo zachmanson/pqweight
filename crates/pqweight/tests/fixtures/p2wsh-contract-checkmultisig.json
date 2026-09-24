@@ -1,0 +1,10 @@
+{
+    "description":  "Mainnet P2WSH spend of a contract with 1-of-2 CHECKMULTISIGVERIFY and 2-of-2 CHECKMULTISIG branches behind a CSV, 1 input, 1 output. Tx de9e790e8e197e183cbca69e15eab0db32b7e2a3428cad65474a8fe0c66ba8d9, block 968211",
+    "oracle":  {
+                   "weight":  669,
+                   "vsize":  168,
+                   "size":  423
+               },
+    "core_version":  "Satoshi:31.1.0",
+    "recorded_by":  "bitcoin-tx -json (mainnet transaction added by hand)"
+}

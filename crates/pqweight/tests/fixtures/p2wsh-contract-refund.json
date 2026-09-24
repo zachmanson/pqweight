@@ -1,0 +1,10 @@
+{
+    "description":  "Mainnet P2WSH spend of the same hashlock/CLTV contract, refund branch [sig C, key C, empty, script] with key C checked against a HASH160 commitment, 1 input, 1 output. Tx 7f5fffb1427abaf05dbe1f81184fe7faea267fddff0f4b1c742c218a5b035c7b, block 964185",
+    "oracle":  {
+                   "weight":  569,
+                   "vsize":  143,
+                   "size":  323
+               },
+    "core_version":  "Satoshi:31.1.0",
+    "recorded_by":  "bitcoin-tx -json (mainnet transaction added by hand)"
+}

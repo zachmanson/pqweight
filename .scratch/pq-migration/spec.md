@@ -27,6 +27,7 @@ A library function `migrate(bytes, ParameterSet)` returns an **Input result** fo
 - The 400,000-weight relay limit is checked on the migrated total and reported as policy, not consensus (ADR-0002).
 - Human output prints an Assumptions block and JSON has an `assumptions` array. Assumptions include: PQ outputs commit to a hash of the pubkey, the 520-byte stack element limit (witness items and pushes inside a script) and sigop accounting are changed by a soft fork, outputs are unchanged.
 - Multisig inputs (slice 3) add assumptions: script size and witnessScript standardness limits are raised by a soft fork, PQ multisig keeps the `OP_CHECKMULTISIG` layout with its dummy and every public key in the script, and P2SH spends migrate to a witness-carried script. See `issues/02-multisig-templates.md`.
+- P2WSH and P2SH-P2WSH contract inputs (slice 6) add the script size assumption above, the `OP_CHECKMULTISIG` layout one when the script uses that opcode, and a recognition heuristic: every key-shaped push (33 bytes starting `02`/`03`, or 65 bytes starting `04`) is a public key and every strict-DER stack item is a signature; all other bytes are carried unchanged. See `issues/06-p2wsh-contract.md`.
 - No consensus validation, as in the weight-computation spec.
 
 ## Other Baseline spend types (not in slice 1)
@@ -36,7 +37,7 @@ A library function `migrate(bytes, ParameterSet)` returns an **Input result** fo
 | P2PK | Later, cheap. Mostly early coins, highly exposed to Long-exposure attack |
 | P2WSH / P2SH multisig, P2SH-P2WSH | Slice 3: literal-swap `CHECKMULTISIG` template, see `issues/02-multisig-templates.md` |
 | P2TR script-path | Slice 5: single-key leaves (one key, one `CHECKSIG`/`CHECKSIGVERIFY`), literal-swap template with a BIP-360-style control block, see `issues/05-p2tr-single-key-leaf.md`. `multi_a` and other multi-key leaves later |
-| Custom-script P2WSH / P2SH (Lightning, timelocks) | Probably stays Unmapped |
+| Custom-script P2WSH / P2SH-P2WSH (hashlocks, timelocks, Lightning) | Slice 6: literal-swap template for any non-multisig witnessScript (every key and signature swapped, all else kept), see `issues/06-p2wsh-contract.md`. Bare P2SH non-multisig stays Unmapped |
 | Bare multisig | Stays Unmapped for now, rare |
 | OP_RETURN | No inputs, no template |
 

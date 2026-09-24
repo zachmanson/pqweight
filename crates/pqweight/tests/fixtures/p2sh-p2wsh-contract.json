@@ -1,0 +1,10 @@
+{
+    "description":  "Mainnet P2SH-P2WSH spend of <key> CHECKSIGVERIFY <key> CHECKSIG IFDUP NOTIF <3-byte> CSV ENDIF with [empty, sig], 1 input. Tx b28ca5e7b1a23d0cbc232c80aac7072a69c3181542f22ec8e27916f2d142e2ff, block 964185",
+    "oracle":  {
+                   "weight":  751,
+                   "vsize":  188,
+                   "size":  304
+               },
+    "core_version":  "Satoshi:31.1.0",
+    "recorded_by":  "bitcoin-tx -json (mainnet transaction added by hand)"
+}

@@ -1,0 +1,10 @@
+{
+    "description":  "Mainnet sweep of 10 hashlock/CLTV contract claims and 4 other inputs; input 2's 32-byte preimage starts with 0x30, the DER sequence tag, 14 inputs. Tx 60299604c16cdd1def593d4b8129aa7b1161c6b52289fdd4d61d2fc79dca730c, block 967209",
+    "oracle":  {
+                   "weight":  6001,
+                   "vsize":  1501,
+                   "size":  4027
+               },
+    "core_version":  "Satoshi:31.1.0",
+    "recorded_by":  "bitcoin-tx -json (mainnet transaction added by hand)"
+}

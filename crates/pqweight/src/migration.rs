@@ -71,6 +71,13 @@ pub enum BaselineSpendType {
     /// signature in place of the Schnorr one, and a control block without the
     /// internal key (see [`single_key_leaf_spend`]).
     P2trScriptPathSingleKey,
+    /// Empty scriptSig, witness `[stack items, script]` whose script is a
+    /// **Contract script**. Migrates by swapping every key and signature for a
+    /// PQ one and keeping every other byte (see [`contract_spend`]).
+    P2wshContract,
+    /// scriptSig is one push of `0020<32-byte script hash>`, witness as for a
+    /// P2WSH contract.
+    P2shP2wshContract,
 }
 
 impl BaselineSpendType {
@@ -78,6 +85,12 @@ impl BaselineSpendType {
     #[must_use]
     pub fn is_no_op(self) -> bool {
         matches!(self, Self::PayToAnchor | Self::Coinbase)
+    }
+
+    /// Whether this is a P2WSH or P2SH-P2WSH spend of a **Contract script**.
+    #[must_use]
+    pub fn is_contract(self) -> bool {
+        matches!(self, Self::P2wshContract | Self::P2shP2wshContract)
     }
 
     /// The Multisig threshold of a multisig spend type, `None` for single-key ones.
@@ -93,7 +106,9 @@ impl BaselineSpendType {
             | Self::P2pkh
             | Self::PayToAnchor
             | Self::Coinbase
-            | Self::P2trScriptPathSingleKey => None,
+            | Self::P2trScriptPathSingleKey
+            | Self::P2wshContract
+            | Self::P2shP2wshContract => None,
         }
     }
 }
@@ -137,7 +152,8 @@ pub enum UnmappedReason {
     /// Empty scriptSig, a 64 or 65-byte Schnorr signature, then an annex.
     P2trKeyPathAnnex,
     /// Empty scriptSig and 2 or more witness items: a witness script spend that
-    /// is not standard multisig (timelocks, HTLCs, single-key scripts).
+    /// is neither standard multisig nor a **Contract script** (a truncated push,
+    /// no signature check, or no public key in the script or on the stack).
     P2wshNonMultisig,
     /// scriptSig is one push of a `0014` or `0020` redeem script (P2SH-P2WPKH or
     /// P2SH-P2WSH), but the witness matched no template.
@@ -200,6 +216,10 @@ const MULTISIG_ASSUMPTIONS: [&str; 2] = [
     "PQ multisig keeps today's OP_CHECKMULTISIG layout, including its dummy element, with every public key in the script",
 ];
 
+/// Assumption stated when any input is a P2WSH or P2SH-P2WSH contract spend
+/// (ticket 06, decision 10): how the template reads a **Contract script**.
+const CONTRACT_ASSUMPTION: &str = "in a P2WSH contract, every key-shaped push (33 bytes starting 02 or 03, or 65 bytes starting 04) is a public key and every strict-DER stack item is a signature; all other bytes are carried unchanged";
+
 /// Assumption stated when any input is a legacy P2SH multisig spend.
 const P2SH_MULTISIG_ASSUMPTION: &str =
     "P2SH multisig spends migrate to a witness-carried script with an empty scriptSig";
@@ -210,8 +230,14 @@ const P2TR_SCRIPT_PATH_ASSUMPTION: &str = "migrated script-path outputs commit t
 
 /// The assumptions that apply, in a fixed order: the base assumptions every
 /// migration states, then any specific to this parameter set, then any specific
-/// to the spend types that were mapped.
-fn assumptions(parameter_set: ParameterSet, inputs: &[InputResult]) -> Vec<&'static str> {
+/// to the spend types that were mapped. `contract_uses_checkmultisig` says
+/// whether a mapped contract's script contains `OP_CHECKMULTISIG(VERIFY)`,
+/// which the spend type alone doesn't record.
+fn assumptions(
+    parameter_set: ParameterSet,
+    inputs: &[InputResult],
+    contract_uses_checkmultisig: bool,
+) -> Vec<&'static str> {
     let mut assumptions: Vec<&'static str> = BASE_ASSUMPTIONS.to_vec();
     if parameter_set == ParameterSet::Falcon512 {
         assumptions.push(
@@ -224,14 +250,23 @@ fn assumptions(parameter_set: ParameterSet, inputs: &[InputResult]) -> Vec<&'sta
             InputResult::Unmapped { .. } => None,
         })
     };
-    if spend_types().any(|spend_type| spend_type.threshold().is_some()) {
-        assumptions.extend(MULTISIG_ASSUMPTIONS);
+    let [script_limits, checkmultisig_layout] = MULTISIG_ASSUMPTIONS;
+    let is_multisig = spend_types().any(|spend_type| spend_type.threshold().is_some());
+    let is_contract = spend_types().any(BaselineSpendType::is_contract);
+    if is_multisig || is_contract {
+        assumptions.push(script_limits);
+    }
+    if is_multisig || contract_uses_checkmultisig {
+        assumptions.push(checkmultisig_layout);
     }
     if spend_types().any(|spend_type| matches!(spend_type, BaselineSpendType::P2shMultisig(_))) {
         assumptions.push(P2SH_MULTISIG_ASSUMPTION);
     }
     if spend_types().any(|spend_type| spend_type == BaselineSpendType::P2trScriptPathSingleKey) {
         assumptions.push(P2TR_SCRIPT_PATH_ASSUMPTION);
+    }
+    if is_contract {
+        assumptions.push(CONTRACT_ASSUMPTION);
     }
     assumptions
 }
@@ -322,7 +357,12 @@ pub fn migrate(bytes: &[u8], parameter_set: ParameterSet) -> Result<Migration, P
 
     let exceeds_relay_limit = migrated.as_ref().map(|w| w.weight > RELAY_WEIGHT_LIMIT);
 
-    let assumptions = assumptions(parameter_set, &inputs);
+    let contract_uses_checkmultisig = tx.inputs.iter().zip(&inputs).any(|(input, result)| {
+        matches!(result, InputResult::Mapped { spend_type, .. } if spend_type.is_contract())
+            && contract_spend(input.witness.as_deref().unwrap_or(&[]))
+                .is_some_and(|contract| contract.uses_checkmultisig())
+    });
+    let assumptions = assumptions(parameter_set, &inputs, contract_uses_checkmultisig);
     Ok(Migration {
         inputs,
         migrated,
@@ -348,9 +388,11 @@ fn migrated_script_sig(spend_type: BaselineSpendType, original: &[u8]) -> &[u8] 
         | BaselineSpendType::PayToAnchor
         | BaselineSpendType::P2wshMultisig(_)
         | BaselineSpendType::P2shMultisig(_)
-        | BaselineSpendType::P2trScriptPathSingleKey => &[],
+        | BaselineSpendType::P2trScriptPathSingleKey
+        | BaselineSpendType::P2wshContract => &[],
         BaselineSpendType::P2shP2wpkh
         | BaselineSpendType::P2shP2wshMultisig(_)
+        | BaselineSpendType::P2shP2wshContract
         | BaselineSpendType::Coinbase => original,
     }
 }
@@ -382,6 +424,11 @@ fn migrated_witness_size(
                 .expect("classified as a single-key leaf spend")
                 .migrated_witness_size(parameter_set)
         }
+        BaselineSpendType::P2wshContract | BaselineSpendType::P2shP2wshContract => {
+            contract_spend(input.witness.as_deref().unwrap_or(&[]))
+                .expect("classified as a contract spend")
+                .migrated_witness_size(parameter_set)
+        }
     }
 }
 
@@ -396,6 +443,9 @@ fn classify(input: &ParsedInput<'_>) -> Option<BaselineSpendType> {
         && let Some(threshold) = multisig_threshold(witness, KeySizes::CompressedOnly)
     {
         return Some(BaselineSpendType::P2shP2wshMultisig(threshold));
+    }
+    if is_p2sh_p2wsh_redeem_script_push(input.script_sig) && contract_spend(witness).is_some() {
+        return Some(BaselineSpendType::P2shP2wshContract);
     }
     // Nothing in the scriptSig or witness: no signature to migrate. A
     // transaction whose inputs are all like this must be serialized without the
@@ -434,6 +484,9 @@ fn classify(input: &ParsedInput<'_>) -> Option<BaselineSpendType> {
             return Some(BaselineSpendType::P2trKeyPath);
         }
     }
+    if contract_spend(witness).is_some() {
+        return Some(BaselineSpendType::P2wshContract);
+    }
     None
 }
 
@@ -444,11 +497,7 @@ fn unmapped_reason(input: &ParsedInput<'_>) -> UnmappedReason {
     if input.script_sig.is_empty() && is_p2tr_script_path(without_annex(witness)) {
         return UnmappedReason::P2trScriptPath;
     }
-    if input.script_sig.is_empty()
-        && let [signature, annex] = witness
-        && (64..=65).contains(&signature.len())
-        && annex.first() == Some(&0x50)
-    {
+    if input.script_sig.is_empty() && is_p2tr_key_path_with_annex(witness) {
         return UnmappedReason::P2trKeyPathAnnex;
     }
     if input.script_sig.is_empty() && witness.len() >= 2 {
@@ -508,6 +557,12 @@ fn is_p2tr_script_path(witness: &[&[u8]]) -> bool {
         && control_block[0] & 0xfe == 0xc0
 }
 
+/// A Schnorr signature, then an annex (starting `0x50`).
+fn is_p2tr_key_path_with_annex(witness: &[&[u8]]) -> bool {
+    matches!(witness, [signature, annex]
+        if is_schnorr_signature(signature) && annex.first() == Some(&0x50))
+}
+
 /// A P2TR script-path spend whose leaf is a **Single-key leaf**, with the parts
 /// its Migration template changes.
 struct SingleKeyLeafSpend<'a> {
@@ -556,7 +611,7 @@ const OP_CHECKSIGVERIFY: u8 = 0xad;
 /// `OP_CHECKMULTISIGVERIFY` (disabled in tapscript) and `OP_CHECKSIGADD`
 /// (`multi_a`).
 fn is_multi_key_check(opcode: u8) -> bool {
-    matches!(opcode, 0xae | 0xaf | 0xba)
+    matches!(opcode, OP_CHECKMULTISIG | OP_CHECKMULTISIGVERIFY | 0xba)
 }
 
 /// BIP-342's `OP_SUCCESSx` opcodes: one anywhere in a leaf makes it succeed
@@ -607,8 +662,9 @@ fn single_key_leaf_spend<'a>(witness: &'a [&'a [u8]]) -> Option<SingleKeyLeafSpe
     )
 }
 
-/// One element of a tapscript leaf. Pushes are told apart by encoding because
-/// the template only swaps a key pushed directly.
+/// One element of a tapscript leaf or a contract's witnessScript. Pushes are
+/// told apart by encoding because the templates only swap a key pushed
+/// directly.
 enum LeafOp<'a> {
     /// A push with opcode 0x01 to 0x4b.
     DirectPush(&'a [u8]),
@@ -617,9 +673,9 @@ enum LeafOp<'a> {
     Opcode(u8),
 }
 
-/// Splits a leaf into ops, with every push form a leaf may use (inscription
-/// envelopes push data with `OP_PUSHDATA1` and `OP_PUSHDATA2`). Returns `None`
-/// for a push that runs past the end of the leaf.
+/// Splits a leaf or witnessScript into ops, with every push form a script may
+/// use (inscription envelopes push data with `OP_PUSHDATA1` and
+/// `OP_PUSHDATA2`). Returns `None` for a push that runs past the end.
 fn read_leaf_ops(leaf: &[u8]) -> Option<Vec<LeafOp<'_>>> {
     let mut ops = Vec::new();
     let mut rest = leaf;
@@ -653,6 +709,131 @@ fn read_leaf_ops(leaf: &[u8]) -> Option<Vec<LeafOp<'_>>> {
         rest = tail;
     }
     Some(ops)
+}
+
+/// A P2WSH spend of a **Contract script**, with the parts its Migration
+/// template changes.
+struct ContractSpend<'a> {
+    /// The witness items the script runs on.
+    stack: &'a [&'a [u8]],
+    script: &'a [u8],
+}
+
+impl ContractSpend<'_> {
+    /// Whether the script contains `OP_CHECKMULTISIG` or
+    /// `OP_CHECKMULTISIGVERIFY`, so the migration relies on PQ keeping that
+    /// opcode's layout.
+    fn uses_checkmultisig(&self) -> bool {
+        read_leaf_ops(self.script).is_some_and(|ops| {
+            ops.iter().any(|op| {
+                matches!(
+                    op,
+                    LeafOp::Opcode(OP_CHECKMULTISIG | OP_CHECKMULTISIGVERIFY)
+                )
+            })
+        })
+    }
+
+    /// Bytes of the migrated witness `[stack items, script]`: every signature
+    /// becomes a PQ signature, every public key (on the stack or pushed in the
+    /// script) a PQ public key. Every other byte is unchanged.
+    fn migrated_witness_size(&self, parameter_set: ParameterSet) -> u64 {
+        let item = |len: u64| compact_size_len(len) + len;
+        let public_key = parameter_set.public_key_size();
+        let stack: u64 = self
+            .stack
+            .iter()
+            .map(|stack_item| {
+                if is_strict_der_signature(stack_item) {
+                    item(parameter_set.signature_size())
+                } else if is_public_key(stack_item) {
+                    item(public_key)
+                } else {
+                    item(stack_item.len() as u64)
+                }
+            })
+            .sum();
+        let script_keys = script_public_keys(self.script);
+        let script = self.script.len() as u64
+            - script_keys
+                .iter()
+                .map(|key| 1 + key.len() as u64)
+                .sum::<u64>()
+            + script_keys.len() as u64 * (push_opcode_len(public_key) + public_key);
+        let item_count = compact_size_len(self.stack.len() as u64 + 1);
+        item_count + stack + item(script)
+    }
+}
+
+/// An ECDSA signature with BIP-66's DER structure: `30 <len> 02 <r len> <r>
+/// 02 <s len> <s>`, every length consistent, `r` and `s` non-empty, then a
+/// sighash byte. A contract's stack can hold data where the fixed-layout
+/// templates can't, and a random 32-byte preimage starts with the `0x30` tag
+/// about once in 256, so the tag and length alone aren't enough here.
+fn is_strict_der_signature(item: &[u8]) -> bool {
+    let [0x30, sequence_len, 0x02, r_len, rest @ ..] = item else {
+        return false;
+    };
+    let r_len = usize::from(*r_len);
+    let Some([0x02, s_len, rest @ ..]) = rest.get(r_len..) else {
+        return false;
+    };
+    let s_len = usize::from(*s_len);
+    item.len() <= 73
+        && r_len > 0
+        && s_len > 0
+        && rest.len() == s_len + 1
+        && usize::from(*sequence_len) == 4 + r_len + s_len
+}
+
+/// A compressed (33 bytes, `02` or `03`) or uncompressed (65 bytes, `04`)
+/// public key, by shape alone.
+fn is_public_key(item: &[u8]) -> bool {
+    matches!(
+        (item.len(), item.first()),
+        (33, Some(0x02 | 0x03)) | (65, Some(0x04))
+    )
+}
+
+/// The public keys a script pushes directly, wherever they sit.
+fn script_public_keys(script: &[u8]) -> Vec<&[u8]> {
+    read_leaf_ops(script)
+        .unwrap_or_default()
+        .into_iter()
+        .filter_map(|op| match op {
+            LeafOp::DirectPush(push) if is_public_key(push) => Some(push),
+            _ => None,
+        })
+        .collect()
+}
+
+/// Reads `witness` as a spend of a **Contract script**: at least one stack item
+/// and a script that parses, contains a signature check and has a public key in
+/// it or on the stack. Standard multisig is matched before this, and a witness
+/// shaped like a Taproot spend is never a contract, even when its control
+/// block or annex happens to parse as one.
+fn contract_spend<'a>(witness: &'a [&'a [u8]]) -> Option<ContractSpend<'a>> {
+    let [stack @ .., script] = witness else {
+        return None;
+    };
+    if stack.is_empty()
+        || is_p2tr_script_path(without_annex(witness))
+        || is_p2tr_key_path_with_annex(witness)
+    {
+        return None;
+    }
+    let ops = read_leaf_ops(script)?;
+    let has_signature_check = ops.iter().any(|op| {
+        matches!(
+            op,
+            LeafOp::Opcode(
+                OP_CHECKSIG | OP_CHECKSIGVERIFY | OP_CHECKMULTISIG | OP_CHECKMULTISIGVERIFY
+            )
+        )
+    });
+    let has_public_key = !script_public_keys(script).is_empty()
+        || stack.iter().any(|stack_item| is_public_key(stack_item));
+    (has_signature_check && has_public_key).then_some(ContractSpend { stack, script })
 }
 
 /// A scriptSig of exactly a DER signature and a 33 or 65-byte public key.
@@ -702,8 +883,9 @@ fn is_p2sh_p2wpkh_redeem_script_push(script_sig: &[u8]) -> bool {
     *push_len == 0x16 && hash.len() == 20
 }
 
-/// `OP_CHECKMULTISIG`.
+/// `OP_CHECKMULTISIG` and `OP_CHECKMULTISIGVERIFY`.
 const OP_CHECKMULTISIG: u8 = 0xae;
+const OP_CHECKMULTISIGVERIFY: u8 = 0xaf;
 
 /// Public key sizes a multisig script may use. Segwit policy rejects
 /// uncompressed keys, so only legacy P2SH allows them.

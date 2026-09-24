@@ -1,4 +1,4 @@
-Status: ready-for-agent
+Status: done
 
 # P2WSH and P2SH-P2WSH contract template (slice 6)
 
@@ -84,6 +84,15 @@ A scratch run of this rule over the sample (2026-09-23, not committed) maps all 
 2. Re-running `pqweight aggregate` on the sample maps all 309 inputs of the P2WSH non-multisig and P2SH-wrapped segwit non-multisig buckets. The only Unmapped inputs left should be the 2 P2TR two-key leaves (about 99.98% of Input weight mapped). If any input fails the guards, report how many and why.
 3. Add a dated "After slice 6" section to the coverage report with the before/after coverage and the migrated totals. Say that the general rule answers the "one protocol's script" objection from "Why P2TR script-path", and note that the 280 contract inputs come from 170 transactions, one of which sweeps 87 of them.
 4. The doc edits above are made.
+
+## Implementation notes (2026-09-23)
+
+- **Fixtures** are the six mainnet transactions from the sample, with oracle values from `bitcoin-tx -json` (txids in their `.json`): `p2wsh-contract-claim`, `-refund`, `-der-like-preimage`, `-anchor`, `-checkmultisig` and `p2sh-p2wsh-contract`. They pass the same three-way check as every other Fixture.
+- **The regtest `p2wsh-pk` and `p2sh-p2wsh-pk` Fixtures** (`<key> CHECKSIG`) were Unmapped before and are now mapped as contracts; their tests now check the migrated weight.
+- **Slice 3's multisig near-miss tests** asserted Unmapped. Most near misses still have keys and a signature check, so by decision 6 they're now contracts. The tests now assert "not standard multisig", which is what they were testing.
+- **One guard beyond decision 6:** a witness shaped like a Taproot spend (a control block after removing any annex, or a Schnorr signature plus an annex) is never a contract, even if its last item happens to parse as a script with a key and `CHECKSIG`. Without it, those inputs would lose their P2TR Unmapped reasons.
+- **Only direct pushes (opcodes 0x01 to 0x4b) are read as keys.** A key pushed with `OP_PUSHDATA1` or `OP_PUSHDATA2` would be carried as data. None occurred in the sample.
+- Acceptance run: all 309 inputs mapped, none failed the guards. The 2 two-key P2TR leaves are the only Unmapped inputs left. Results are in the coverage report's "After slice 6" section.
 
 ## Out of Scope
 

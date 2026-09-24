@@ -187,6 +187,21 @@ fn is_mapped_as(tx: &[u8], expected: BaselineSpendType) -> bool {
     )
 }
 
+/// Whether the first input is Unmapped or mapped as a P2WSH contract: what a
+/// near miss of standard multisig may become, since most still have keys and a
+/// signature check (ticket 06, decision 6).
+fn is_contract_or_unmapped(tx: &[u8]) -> bool {
+    let migration = migrate(tx, ParameterSet::MlDsa44).expect("valid transaction");
+    matches!(
+        migration.inputs[0],
+        InputResult::Unmapped { .. }
+            | InputResult::Mapped {
+                spend_type: BaselineSpendType::P2wshContract,
+                ..
+            }
+    )
+}
+
 /// The Unmapped reason of the first input, or `None` if it is mapped.
 fn unmapped_reason(tx: &[u8]) -> Option<UnmappedReason> {
     let migration = migrate(tx, ParameterSet::MlDsa44).expect("valid transaction");
@@ -529,19 +544,366 @@ fn p2tr_key_path_spend_with_an_annex_is_unmapped_as_key_path_with_annex() {
 }
 
 #[test]
-fn p2wsh_single_key_script_spend_is_unmapped_as_p2wsh_non_multisig() {
+fn p2wsh_single_key_script_is_migrated_as_a_contract_with_the_pq_key_in_the_script() {
+    let tx = load_fixture("p2wsh-pk");
+
+    let migration = migrate(&tx, ParameterSet::MlDsa44).expect("valid transaction");
+
+    // Fixture witness: [71-byte DER signature, 35-byte script `21 <33-byte key> ac`]
+    // = 1 + 72 + 36 = 109 bytes.
+    // ML-DSA-44 witness [PQ signature, script]:
+    //   item count 1
+    //   + signature: 3-byte length prefix + 2420 = 2423
+    //   + script: 35 - 34 (direct key push) + 1315 (OP_PUSHDATA2 3 + 1312 key)
+    //     = 1316, plus its 3-byte length prefix = 1319
+    //   = 1 + 2423 + 1319 = 3743 bytes.
+    // Non-witness part: empty scriptSig, 41 bytes = 164 WU.
+    // Input template weight: 164 + 3743 = 3907 WU.
     assert_eq!(
-        unmapped_reason(&load_fixture("p2wsh-pk")),
-        Some(UnmappedReason::P2wshNonMultisig)
+        summaries(&migration.inputs),
+        vec![Summary::Mapped(BaselineSpendType::P2wshContract, 3907)]
+    );
+    // 439 (Oracle) - 109 + 3743 = 4073 WU, vsize ceil(4073 / 4) = 1019.
+    let total = migration.migrated.expect("every input is mapped");
+    assert_eq!(total.weight, 4073);
+    assert_eq!(total.vsize, 1019);
+}
+
+/// The two-key hashlock/CLTV contract that dominates P2WSH in the September 2026
+/// sample (130 bytes, two 33-byte keys pushed directly):
+/// `<key A> CHECKSIG NOTIF DUP HASH160 <20> EQUALVERIFY CHECKSIGVERIFY <locktime>
+/// CLTV ELSE <key B> CHECKSIGVERIFY SIZE 32 EQUALVERIFY HASH160 <20> EQUAL ENDIF`.
+/// Migrated at ML-DSA-44: 130 - 2 × 34 + 2 × 1315 = 2692 bytes, plus its 3-byte
+/// length prefix = 2695.
+const HASHLOCK_CONTRACT_MIGRATED_ITEM: u64 = 2695;
+
+#[test]
+fn p2wsh_contract_claim_swaps_both_keys_and_signatures_and_keeps_the_preimage() {
+    let tx = load_fixture("p2wsh-contract-claim");
+
+    let migration = migrate(&tx, ParameterSet::MlDsa44).expect("valid transaction");
+
+    // Mainnet witness: [32-byte preimage, 72 and 71-byte signatures, 130-byte
+    // script] = 1 + 33 + 73 + 72 + 131 = 310 bytes.
+    // ML-DSA-44: item count 1 + preimage 33 (unchanged) + 2 × 2423 signatures
+    //   + script 2695 = 7575; 164 non-witness + 7575 = 7739 WU.
+    assert_eq!(1 + 33 + 2 * 2423 + HASHLOCK_CONTRACT_MIGRATED_ITEM, 7575);
+    assert_eq!(
+        summaries(&migration.inputs),
+        vec![Summary::Mapped(BaselineSpendType::P2wshContract, 7739)]
+    );
+    // 640 (Oracle) - 310 + 7575 = 7905 WU, vsize ceil(7905 / 4) = 1977.
+    let total = migration.migrated.expect("every input is mapped");
+    assert_eq!(total.weight, 7905);
+    assert_eq!(total.vsize, 1977);
+}
+
+#[test]
+fn p2wsh_contract_refund_swaps_the_stack_key_and_keeps_its_hash_and_the_empty_item() {
+    let tx = load_fixture("p2wsh-contract-refund");
+
+    let migration = migrate(&tx, ParameterSet::MlDsa44).expect("valid transaction");
+
+    // Mainnet witness: [71-byte signature, 33-byte key, empty, 130-byte script]
+    // = 1 + 72 + 34 + 1 + 131 = 239 bytes. The script checks the key against a
+    // 20-byte HASH160, which stays 20 bytes.
+    // ML-DSA-44: item count 1 + signature 2423 + key 3 + 1312 = 1315 + empty 1
+    //   + script 2695 = 6435; 164 + 6435 = 6599 WU.
+    assert_eq!(
+        summaries(&migration.inputs),
+        vec![Summary::Mapped(BaselineSpendType::P2wshContract, 6599)]
+    );
+    // 569 (Oracle) - 239 + 6435 = 6765 WU, vsize ceil(6765 / 4) = 1692.
+    let total = migration.migrated.expect("every input is mapped");
+    assert_eq!(total.weight, 6765);
+    assert_eq!(total.vsize, 1692);
+}
+
+#[test]
+fn p2wsh_contract_preimage_starting_with_the_der_tag_is_not_a_signature() {
+    let tx = load_fixture("p2wsh-contract-der-like-preimage");
+
+    let migration = migrate(&tx, ParameterSet::MlDsa44).expect("valid transaction");
+
+    // Input 2: [32-byte preimage starting 0x30, 71 and 71-byte signatures,
+    // 130-byte script]. The preimage stays 33 bytes with its prefix, so the
+    // input migrates exactly like the claim above: 164 + 7575 = 7739 WU.
+    assert_eq!(
+        summaries(&migration.inputs)[2],
+        Summary::Mapped(BaselineSpendType::P2wshContract, 7739)
     );
 }
 
 #[test]
-fn p2sh_p2wsh_single_key_script_spend_is_unmapped_as_p2sh_wrapped_segwit_non_multisig() {
+fn p2wsh_contract_with_an_empty_signature_is_mapped_because_its_script_key_grows() {
+    let tx = load_fixture("p2wsh-contract-anchor");
+
+    let migration = migrate(&tx, ParameterSet::MlDsa44).expect("valid transaction");
+
+    // Input 0 is a key-path spend (witness 1 + 65 = 66 bytes), migrated to
+    // 1 + 2423 + 1315 = 3739; 164 + 3739 = 3903 WU.
+    // Input 1 is a Lightning anchor swept with an empty signature: [empty,
+    // 40-byte script `21 <key> ac 73 64 60 b2 68`] = 1 + 1 + 41 = 43 bytes.
+    // ML-DSA-44: item count 1 + empty 1 + script 40 - 34 + 1315 = 1321 (+3
+    // prefix = 1324) = 1326; 164 + 1326 = 1490 WU.
     assert_eq!(
-        unmapped_reason(&load_fixture("p2sh-p2wsh-pk")),
+        summaries(&migration.inputs),
+        vec![
+            Summary::Mapped(BaselineSpendType::P2trKeyPath, 3903),
+            Summary::Mapped(BaselineSpendType::P2wshContract, 1490),
+        ]
+    );
+    // 651 (Oracle) - 66 - 43 + 3739 + 1326 = 5607 WU, vsize ceil(5607 / 4) = 1402.
+    let total = migration.migrated.expect("every input is mapped");
+    assert_eq!(total.weight, 5607);
+    assert_eq!(total.vsize, 1402);
+}
+
+#[test]
+fn p2wsh_contract_with_checkmultisig_inside_swaps_every_key_in_the_script() {
+    let tx = load_fixture("p2wsh-contract-checkmultisig");
+
+    let migration = migrate(&tx, ParameterSet::MlDsa44).expect("valid transaction");
+
+    // Mainnet witness: [72-byte signature, empty, 71-byte signature, `01`,
+    // 189-byte script `OP_12 CSV VERIFY IF 1 <K1> <K2> 2 CHECKMULTISIGVERIFY <K3>
+    // CHECKSIG ELSE <3-byte> CSV VERIFY 2 <K4> <K5> 2 CHECKMULTISIG ENDIF`]
+    // = 1 + 73 + 1 + 72 + 2 + 190 = 339 bytes. Five keys, all swapped, though
+    // this spend's branch uses only three.
+    // ML-DSA-44: script 189 - 5 × 34 + 5 × 1315 = 6594 (+3 prefix = 6597).
+    //   item count 1 + 2 × 2423 + empty 1 + `01` 2 + 6597 = 11447;
+    //   164 + 11447 = 11611 WU.
+    assert_eq!(
+        summaries(&migration.inputs),
+        vec![Summary::Mapped(BaselineSpendType::P2wshContract, 11611)]
+    );
+    // 669 (Oracle) - 339 + 11447 = 11777 WU, vsize ceil(11777 / 4) = 2945.
+    let total = migration.migrated.expect("every input is mapped");
+    assert_eq!(total.weight, 11777);
+    assert_eq!(total.vsize, 2945);
+}
+
+/// A 72-byte ECDSA signature with a consistent DER structure: `30 45 02 21
+/// <33-byte r> 02 20 <32-byte s>` and a sighash byte.
+fn strict_der_signature() -> Vec<u8> {
+    let mut signature = vec![0x30, 0x45, 0x02, 0x21];
+    signature.extend_from_slice(&[1u8; 33]);
+    signature.extend_from_slice(&[0x02, 0x20]);
+    signature.extend_from_slice(&[1u8; 32]);
+    signature.push(0x01);
+    signature
+}
+
+#[test]
+fn p2wsh_contract_swaps_every_key_shaped_push_and_keeps_der_lookalikes() {
+    let compressed: &[u8] = &[&[0x21, 0x02][..], &[5u8; 32]].concat();
+    let uncompressed: &[u8] = &[&[0x41, 0x04][..], &[6u8; 64]].concat();
+    // `<33-byte key> SWAP <65-byte key> CHECKSIG`: the first key isn't next to
+    // the signature check, and the second is uncompressed. 34 + 1 + 66 + 1 = 102 bytes.
+    let script: &[u8] = &[compressed, &[0x7c], uncompressed, &[0xac]].concat();
+    // Starts with the DER tag and is 72 bytes, but its structure is not DER.
+    let der_lookalike = der_signature(72);
+    let tx = segwit_tx(&[], &[&strict_der_signature(), &der_lookalike, script]);
+
+    let migration = migrate(&tx, ParameterSet::MlDsa44).expect("valid transaction");
+
+    // ML-DSA-44: script 102 - 34 - 66 + 2 × 1315 = 2632 (+3 prefix = 2635).
+    //   item count 1 + signature 2423 + lookalike 73 (unchanged) + 2635 = 5132;
+    //   164 + 5132 = 5296 WU.
+    assert_eq!(
+        summaries(&migration.inputs),
+        vec![Summary::Mapped(BaselineSpendType::P2wshContract, 5296)]
+    );
+}
+
+#[test]
+fn p2wsh_contract_carries_items_with_a_broken_der_structure_as_data() {
+    let compressed: &[u8] = &[&[0x21, 0x02][..], &[5u8; 32]].concat();
+    let script: &[u8] = &[compressed, &[0xac]].concat();
+    let valid = strict_der_signature();
+    let with_byte = |index: usize, value: u8| {
+        let mut item = valid.clone();
+        item[index] = value;
+        item
+    };
+    let empty_r = [
+        &[0x30, 0x24, 0x02, 0x00, 0x02, 0x20][..],
+        &[1u8; 32],
+        &[0x01],
+    ]
+    .concat();
+    let empty_s = [
+        &[0x30, 0x25, 0x02, 0x21][..],
+        &[1u8; 33],
+        &[0x02, 0x00, 0x01],
+    ]
+    .concat();
+    // Consistent lengths, but a 34-byte r makes it 74 bytes, over DER's 73.
+    let over_73_bytes = [
+        &[0x30, 0x47, 0x02, 0x22][..],
+        &[1u8; 34],
+        &[0x02, 0x21],
+        &[1u8; 33],
+        &[0x01],
+    ]
+    .concat();
+    let cases: Vec<(&str, Vec<u8>)> = vec![
+        ("wrong sequence length", with_byte(1, 0x44)),
+        ("r not tagged 0x02", with_byte(2, 0x03)),
+        ("s not tagged 0x02", with_byte(37, 0x03)),
+        ("no sighash byte", valid[..valid.len() - 1].to_vec()),
+        ("empty r", empty_r),
+        ("empty s", empty_s),
+        ("74 bytes", over_73_bytes),
+    ];
+
+    // `21 <key> ac` migrates to 35 - 34 + 1315 = 1316 (+3 prefix = 1319), so
+    // with the item carried unchanged: 1 + (1 + len) + 1319; plus 164 WU
+    // non-witness. A valid signature would be 1 + 2423 + 1319 + 164 = 3907.
+    let control = segwit_tx(&[], &[&valid, script]);
+    assert_eq!(
+        summaries(
+            &migrate(&control, ParameterSet::MlDsa44)
+                .expect("valid")
+                .inputs
+        ),
+        vec![Summary::Mapped(BaselineSpendType::P2wshContract, 3907)]
+    );
+    for (name, item) in cases {
+        let tx = segwit_tx(&[], &[&item, script]);
+        let expected = 164 + 1 + (1 + item.len() as u64) + 1319;
+        assert_eq!(
+            summaries(&migrate(&tx, ParameterSet::MlDsa44).expect("valid").inputs),
+            vec![Summary::Mapped(BaselineSpendType::P2wshContract, expected)],
+            "{name}"
+        );
+    }
+}
+
+#[test]
+fn p2wsh_contract_pushes_each_pq_key_with_the_shortest_push() {
+    let tx = load_fixture("p2wsh-contract-claim");
+
+    // Claim fixture: [32-byte preimage, two signatures, 130-byte script with
+    // two 34-byte key pushes]; 164 WU non-witness, item count 1, preimage 33.
+    // SLH-DSA-128s: 32-byte key, a direct push of 33 bytes, so the script
+    // shrinks to 130 - 68 + 66 = 128 (+1 prefix = 129). Signatures 2 × (3 +
+    // 7856) = 15718. 1 + 33 + 15718 + 129 = 15881; 164 + 15881 = 16045 WU.
+    // Falcon-512: 897-byte key needs OP_PUSHDATA2, 900 bytes per push: script
+    // 130 - 68 + 1800 = 1862 (+3 prefix = 1865). Signatures 2 × (3 + 666) =
+    // 1338. 1 + 33 + 1338 + 1865 = 3237; 164 + 3237 = 3401 WU.
+    let cases = [
+        (ParameterSet::SlhDsa128s, 16045),
+        (ParameterSet::Falcon512, 3401),
+    ];
+    for (parameter_set, expected) in cases {
+        let migration = migrate(&tx, parameter_set).expect("valid transaction");
+        assert_eq!(
+            summaries(&migration.inputs),
+            vec![Summary::Mapped(BaselineSpendType::P2wshContract, expected)],
+            "{parameter_set:?}"
+        );
+    }
+}
+
+#[test]
+fn p2wsh_contract_near_misses_stay_unmapped_with_their_reason() {
+    let key = [2u8; 33];
+    let signature = der_signature(72);
+    let push_key: &[u8] = &[&[0x21][..], &key].concat();
+    // `21 <key> ac` with 29 OP_0s after it: 65 bytes starting 0xc0, so it is
+    // also a tapscript control block with one Merkle path hash.
+    let control_block_like_contract: &[u8] = &[&[0xc0][..], push_key, &[0xac], &[0; 29]].concat();
+    // `50 21 <key> ac`: starts with the annex tag 0x50 (OP_RESERVED as an opcode).
+    let annex_like_contract: &[u8] = &[&[0x50][..], push_key, &[0xac]].concat();
+    let key_then_drop_1: &[u8] = &[push_key, &[0x75, 0x51]].concat();
+
+    let cases: Vec<(&str, Vec<&[u8]>, UnmappedReason)> = vec![
+        (
+            "truncated push",
+            vec![&signature, &[0x21, 0x02, 0x03, 0xac]],
+            UnmappedReason::P2wshNonMultisig,
+        ),
+        (
+            "no signature check: <key> DROP 1",
+            vec![&signature, key_then_drop_1],
+            UnmappedReason::P2wshNonMultisig,
+        ),
+        (
+            "no key: bare CHECKSIG with a 20-byte stack item",
+            vec![&signature, &[9u8; 20], &[0xac]],
+            UnmappedReason::P2wshNonMultisig,
+        ),
+        (
+            "P2TR script-path whose control block parses as a contract",
+            vec![&[1u8; 64], &[0xac], control_block_like_contract],
+            UnmappedReason::P2trScriptPath,
+        ),
+        (
+            "P2TR key path whose annex parses as a contract",
+            vec![&[1u8; 64], annex_like_contract],
+            UnmappedReason::P2trKeyPathAnnex,
+        ),
+    ];
+    for (name, witness, expected) in cases {
+        assert_eq!(
+            unmapped_reason(&segwit_tx(&[], &witness)),
+            Some(expected),
+            "{name}"
+        );
+    }
+
+    let wrapped_truncated = segwit_tx(
+        &p2sh_p2wsh_redeem_script_push(),
+        &[&signature, &[0x21, 0x02, 0x03, 0xac]],
+    );
+    assert_eq!(
+        unmapped_reason(&wrapped_truncated),
         Some(UnmappedReason::P2shSegwitNonMultisig)
     );
+}
+
+#[test]
+fn p2sh_p2wsh_single_key_script_is_migrated_as_a_contract_keeping_the_redeem_script_scriptsig() {
+    let tx = load_fixture("p2sh-p2wsh-pk");
+
+    let migration = migrate(&tx, ParameterSet::MlDsa44).expect("valid transaction");
+
+    // Witness as the P2WSH single-key fixture: 109 bytes, migrated to 3743.
+    // Non-witness part: scriptSig unchanged, 0x22 push plus the 34-byte
+    // 0020<32-byte hash> redeem script = 35 bytes, with a 1-byte length prefix:
+    // 36 + 1 + 35 + 4 = 76 bytes = 304 WU.
+    // Input template weight: 304 + 3743 = 4047 WU.
+    assert_eq!(
+        summaries(&migration.inputs),
+        vec![Summary::Mapped(BaselineSpendType::P2shP2wshContract, 4047)]
+    );
+    // 579 (Oracle) - 109 + 3743 = 4213 WU, vsize ceil(4213 / 4) = 1054.
+    let total = migration.migrated.expect("every input is mapped");
+    assert_eq!(total.weight, 4213);
+    assert_eq!(total.vsize, 1054);
+}
+
+#[test]
+fn p2sh_p2wsh_contract_is_migrated_like_its_p2wsh_form() {
+    let tx = load_fixture("p2sh-p2wsh-contract");
+
+    let migration = migrate(&tx, ParameterSet::MlDsa44).expect("valid transaction");
+
+    // Mainnet witness: [empty, 71-byte signature, 78-byte script `<K1>
+    // CHECKSIGVERIFY <K2> CHECKSIG IFDUP NOTIF <3-byte> CSV ENDIF`]
+    // = 1 + 1 + 72 + 79 = 153 bytes.
+    // ML-DSA-44: script 78 - 2 × 34 + 2 × 1315 = 2640 (+3 prefix = 2643).
+    //   item count 1 + empty 1 + signature 2423 + 2643 = 5068;
+    //   304 non-witness (redeem script scriptSig) + 5068 = 5372 WU.
+    assert_eq!(
+        summaries(&migration.inputs),
+        vec![Summary::Mapped(BaselineSpendType::P2shP2wshContract, 5372)]
+    );
+    // 751 (Oracle) - 153 + 5068 = 5666 WU, vsize ceil(5666 / 4) = 1417.
+    let total = migration.migrated.expect("every input is mapped");
+    assert_eq!(total.weight, 5666);
+    assert_eq!(total.vsize, 1417);
 }
 
 #[test]
@@ -962,6 +1324,7 @@ fn p2wsh_multisig_above_16_keys_keeps_its_2_byte_number_push() {
 
 #[test]
 fn p2wsh_multisig_numbers_must_be_minimally_encoded_and_at_most_20() {
+    // Each near miss is a P2WSH contract or Unmapped, never standard multisig.
     let key = [2u8; 33];
     let signature = der_signature(72);
     let sigs_and_script = |m: &[u8], n_keys: usize, n: &[u8], n_sigs: usize| {
@@ -983,12 +1346,7 @@ fn p2wsh_multisig_numbers_must_be_minimally_encoded_and_at_most_20() {
     ] {
         let items: Vec<&[u8]> = witness.iter().map(Vec::as_slice).collect();
         let tx = segwit_tx(&[], &items);
-        let migration = migrate(&tx, ParameterSet::MlDsa44).expect("valid transaction");
-        assert_eq!(
-            summaries(&migration.inputs),
-            vec![Summary::Unmapped],
-            "{name}"
-        );
+        assert!(is_contract_or_unmapped(&tx), "{name}");
     }
 }
 
@@ -1005,7 +1363,8 @@ fn p2wsh_multisig_accepts_a_short_der_signature() {
 }
 
 #[test]
-fn p2wsh_multisig_near_misses_are_unmapped() {
+fn p2wsh_multisig_near_misses_are_contracts_or_unmapped() {
+    // Each near miss is a P2WSH contract or Unmapped, never standard multisig.
     let key = [2u8; 33];
     let keys: &[&[u8]] = &[&key, &key, &key];
     let signature = der_signature(72);
@@ -1070,12 +1429,7 @@ fn p2wsh_multisig_near_misses_are_unmapped() {
         ("non-empty scriptSig", with_script_sig),
         ("timelock script", timelock_script),
     ] {
-        let migration = migrate(&tx, ParameterSet::MlDsa44).expect("valid transaction");
-        assert_eq!(
-            summaries(&migration.inputs),
-            vec![Summary::Unmapped],
-            "{name}"
-        );
+        assert!(is_contract_or_unmapped(&tx), "{name}");
     }
 }
 
@@ -1267,6 +1621,34 @@ fn p2tr_single_key_leaf_inputs_state_that_outputs_commit_to_the_merkle_root_with
         &["control block", "leaf-version byte"]
     ));
     assert!(!mentions(assumptions, &["OP_CHECKMULTISIG"]));
+}
+
+#[test]
+fn p2wsh_contract_inputs_state_the_script_limit_and_how_keys_and_signatures_are_recognized() {
+    let tx = load_fixture("p2wsh-contract-claim");
+
+    let migration = migrate(&tx, ParameterSet::MlDsa44).expect("valid transaction");
+
+    let assumptions = &migration.assumptions;
+    assert!(mentions(assumptions, &["10,000-byte script", "soft fork"]));
+    assert!(mentions(
+        assumptions,
+        &["P2WSH contract", "key-shaped push", "strict-DER"]
+    ));
+    // No OP_CHECKMULTISIG in this contract's script.
+    assert!(!mentions(assumptions, &["OP_CHECKMULTISIG"]));
+}
+
+#[test]
+fn p2wsh_contract_with_checkmultisig_inside_also_states_the_checkmultisig_layout() {
+    let tx = load_fixture("p2wsh-contract-checkmultisig");
+
+    let migration = migrate(&tx, ParameterSet::MlDsa44).expect("valid transaction");
+
+    assert!(mentions(
+        &migration.assumptions,
+        &["OP_CHECKMULTISIG", "dummy"]
+    ));
 }
 
 #[test]
