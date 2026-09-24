@@ -43,6 +43,10 @@ Breaking a public key that is already visible on-chain before the coins are spen
 **Short-exposure attack**:
 Breaking a public key revealed at spend time and forging a competing spend before the original confirms.
 
+**Key exposure**:
+Where an input's public key sat before this spend, as seen from the spending side: Exposed in output (the key is in the output itself, such as P2TR or P2PK, so open to a Long-exposure attack), Hashed until spend (only a hash was on-chain, so open to a Short-exposure attack unless the key was revealed earlier through address reuse, which the spending side can't show), No key (nothing to attack), or Undetermined. It names what was seen, never what an attacker could actually do.
+_Avoid_: Long-exposed, short-exposed, vulnerable
+
 **Signature scheme**:
 A post-quantum signing algorithm family, such as ML-DSA, SLH-DSA or Falcon.
 _Avoid_: Algorithm, cipher
@@ -72,6 +76,9 @@ The outcome for one input of a transaction: either its Migration template weight
 
 **Input weight**:
 The weight of one input's own bytes: outpoint, scriptSig and sequence at 4 weight units each, plus its witness at 1 each. Transaction overhead and outputs belong to no input, so a transaction's Input weights do not sum to its Weight.
+
+**Added weight**:
+An input's Input weight after migration minus its Input weight today. Summed over any set of inputs, it is the block space migrating just those inputs would add, since outputs and transaction overhead don't change (except the 2-byte segwit marker and flag a legacy-only transaction gains). Unmapped inputs have none.
 
 **Fully mapped**:
 A transaction whose Input result is Mapped for every input. Only fully mapped transactions contribute to a migrated total, individually or summed across a batch.
