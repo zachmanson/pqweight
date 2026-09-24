@@ -8,8 +8,8 @@ mod common;
 
 use common::{der_signature, fixtures_dir};
 use pqweight::{
-    BaselineSpendType, BreakdownKind, BreakdownRow, FeeRate, ParameterSet, UnmappedReason,
-    aggregate,
+    BaselineSpendType, BreakdownKind, BreakdownRow, ExposureRow, FeeRate, KeyExposure,
+    ParameterSet, UnmappedReason, aggregate,
 };
 
 /// A one-input, one-output segwit transaction with the given scriptSig and
@@ -32,6 +32,22 @@ fn segwit_tx(script_sig: &[u8], witness: &[&[u8]]) -> Vec<u8> {
         tx.push(u8::try_from(item.len()).expect("short item"));
         tx.extend_from_slice(item);
     }
+    tx.extend_from_slice(&0u32.to_le_bytes()); // locktime
+    tx
+}
+
+/// A one-input, one-output legacy transaction with an empty scriptSig: a
+/// pay-to-anchor spend in legacy form. Its input is 41 non-witness bytes.
+fn legacy_anchor_tx() -> Vec<u8> {
+    let mut tx = Vec::new();
+    tx.extend_from_slice(&1u32.to_le_bytes()); // version
+    tx.push(1); // input count
+    tx.extend_from_slice(&[0u8; 36]); // prevout
+    tx.push(0); // empty scriptSig
+    tx.extend_from_slice(&[0xff; 4]); // sequence
+    tx.push(1); // output count
+    tx.extend_from_slice(&0u64.to_le_bytes()); // value
+    tx.push(0); // empty scriptPubKey
     tx.extend_from_slice(&0u32.to_le_bytes()); // locktime
     tx
 }
@@ -212,4 +228,46 @@ fn partially_mapped_transactions_have_their_own_baseline_totals() {
 
     assert_eq!(result.partially_mapped.weight, 400);
     assert_eq!(result.partially_mapped.vsize, 100);
+}
+
+#[test]
+fn exposure_has_one_row_per_key_exposure_summing_its_inputs_and_counting_unmapped_ones_apart() {
+    // Input weights at ML-DSA-44, each 41 non-witness bytes x 4 = 164 WU plus witness:
+    // - P2TR key-path, built: witness 1 + (1 + 64) = 66, so 230. Template 3903
+    //   (same [signature, key] witness as P2WPKH, see migrate.rs).
+    // - p2tr-keypath-annex fixture: Unmapped, 164 + 70 = 234 (see the breakdown test).
+    // - p2wpkh fixture: 270, template 3903.
+    // - legacy anchor: 164, no witness before or after, so 164.
+    let lines = vec![
+        to_hex(&segwit_tx(&[], &[&[0u8; 64]])),
+        fixture_hex("p2tr-keypath-annex"),
+        fixture_hex("p2wpkh"),
+        to_hex(&legacy_anchor_tx()),
+    ];
+
+    let result = aggregate(lines.into_iter(), ParameterSet::MlDsa44, None);
+
+    let row = |key_exposure, mapped: (usize, u64, u64), unmapped: (usize, u64)| ExposureRow {
+        key_exposure,
+        mapped_inputs: mapped.0,
+        baseline_weight: mapped.1,
+        migrated_weight: mapped.2,
+        unmapped_inputs: unmapped.0,
+        unmapped_baseline_weight: unmapped.1,
+    };
+    assert_eq!(
+        result.exposure,
+        vec![
+            row(KeyExposure::ExposedInOutput, (1, 230, 3903), (1, 234)),
+            row(KeyExposure::HashedUntilSpend, (1, 270, 3903), (0, 0)),
+            row(KeyExposure::NoKey, (1, 164, 164), (0, 0)),
+            row(KeyExposure::Undetermined, (0, 0, 0), (0, 0)),
+        ]
+    );
+    let added: Vec<i64> = result
+        .exposure
+        .iter()
+        .map(ExposureRow::added_weight)
+        .collect();
+    assert_eq!(added, vec![3903 - 230, 3903 - 270, 0, 0]);
 }

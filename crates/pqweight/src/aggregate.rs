@@ -2,7 +2,9 @@
 //! and how often does template coverage fail, across a batch rather than one
 //! spend.
 
-use crate::migration::{BaselineSpendType, InputResult, ParameterSet, UnmappedReason, migrate};
+use crate::migration::{
+    BaselineSpendType, InputResult, KeyExposure, ParameterSet, UnmappedReason, migrate,
+};
 use crate::{FeeRate, TransactionWeight, fee, transaction_weight};
 
 /// Weight and vsize summed across transactions.
@@ -65,6 +67,33 @@ pub struct BreakdownRow {
     pub migrated_weight: Option<u64>,
 }
 
+/// Every input with one **Key exposure** across the batch: Mapped inputs summed
+/// for their **Added weight**, Unmapped ones counted apart since they have none.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct ExposureRow {
+    pub key_exposure: KeyExposure,
+    pub mapped_inputs: usize,
+    /// Summed **Input weight** today of the Mapped inputs.
+    pub baseline_weight: u64,
+    /// Summed **Input weight** after migration of the Mapped inputs.
+    pub migrated_weight: u64,
+    pub unmapped_inputs: usize,
+    /// Summed **Input weight** today of the Unmapped inputs. When this isn't
+    /// zero, the row's Added weight is a lower bound.
+    pub unmapped_baseline_weight: u64,
+}
+
+impl ExposureRow {
+    /// The block space migrating this row's Mapped inputs would add: migrated
+    /// minus baseline **Input weight**. Signed, since a template may in
+    /// principle shrink an input. Weights never come near 2^63, so the casts
+    /// never wrap.
+    #[must_use]
+    pub fn added_weight(&self) -> i64 {
+        self.migrated_weight.cast_signed() - self.baseline_weight.cast_signed()
+    }
+}
+
 /// The result of running `migrate()` over many transactions and summing.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct AggregateResult {
@@ -81,6 +110,9 @@ pub struct AggregateResult {
     pub counts: AggregateCounts,
     /// One row per kind of input seen, in order of first appearance.
     pub breakdown: Vec<BreakdownRow>,
+    /// One row per Key exposure, always all four, in the order `Exposed in
+    /// output`, `Hashed until spend`, `No key`, `Undetermined`.
+    pub exposure: Vec<ExposureRow>,
     pub errors: Vec<AggregateError>,
 }
 
@@ -180,9 +212,48 @@ pub fn aggregate(
             migrated: (counts.fully_mapped > 0).then_some(migrated_fee),
         }),
         counts,
+        exposure: exposure_rows(&breakdown),
         breakdown,
         errors,
     }
+}
+
+/// The breakdown regrouped by Key exposure, one row for each of the four values
+/// even when no input has it.
+fn exposure_rows(breakdown: &[BreakdownRow]) -> Vec<ExposureRow> {
+    [
+        KeyExposure::ExposedInOutput,
+        KeyExposure::HashedUntilSpend,
+        KeyExposure::NoKey,
+        KeyExposure::Undetermined,
+    ]
+    .into_iter()
+    .map(|key_exposure| {
+        let mut row = ExposureRow {
+            key_exposure,
+            mapped_inputs: 0,
+            baseline_weight: 0,
+            migrated_weight: 0,
+            unmapped_inputs: 0,
+            unmapped_baseline_weight: 0,
+        };
+        for kind_row in breakdown {
+            match kind_row.kind {
+                BreakdownKind::Mapped(spend_type) if spend_type.key_exposure() == key_exposure => {
+                    row.mapped_inputs += kind_row.inputs;
+                    row.baseline_weight += kind_row.baseline_weight;
+                    row.migrated_weight += kind_row.migrated_weight.unwrap_or(0);
+                }
+                BreakdownKind::Unmapped(reason) if reason.key_exposure() == key_exposure => {
+                    row.unmapped_inputs += kind_row.inputs;
+                    row.unmapped_baseline_weight += kind_row.baseline_weight;
+                }
+                BreakdownKind::Mapped(_) | BreakdownKind::Unmapped(_) => {}
+            }
+        }
+        row
+    })
+    .collect()
 }
 
 /// Adds one input to the row for its kind, starting that row if it is the

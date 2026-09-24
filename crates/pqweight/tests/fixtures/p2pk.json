@@ -1,0 +1,10 @@
+{
+    "description":  "Mainnet P2PK spend: the first transaction between two people (Satoshi to Hal Finney), spending block 9's coinbase output with a single DER signature, 1 input. Tx f4184fc596403b9d638783cf57adfe4c75c605f6356fbc91338530e9831e9e16, block 170",
+    "oracle":  {
+                   "weight":  1100,
+                   "vsize":  275,
+                   "size":  275
+               },
+    "core_version":  "Satoshi:31.1.0",
+    "recorded_by":  "bitcoin-tx -json (mainnet transaction added by hand)"
+}

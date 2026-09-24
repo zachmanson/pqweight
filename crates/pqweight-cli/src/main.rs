@@ -2,8 +2,9 @@ use std::io::Read;
 use std::process::ExitCode;
 
 use pqweight::{
-    AggregateResult, BaselineSpendType, BreakdownKind, BreakdownRow, FeeRate, InputResult,
-    Migration, MultisigThreshold, ParameterSet, UnmappedReason, aggregate, fee,
+    AggregateResult, BaselineSpendType, BreakdownKind, BreakdownRow, ExposureRow, FeeRate,
+    InputResult, KeyExposure, Migration, MultisigThreshold, ParameterSet, UnmappedReason,
+    aggregate, fee,
 };
 
 fn main() -> ExitCode {
@@ -159,6 +160,7 @@ fn aggregate_human(result: &AggregateResult) -> String {
         percent(result.partially_mapped.weight, result.baseline.weight)
     ));
     lines.extend(breakdown_table(&result.breakdown));
+    lines.extend(exposure_table(&result.exposure));
     if !result.errors.is_empty() {
         lines.push("errors:".to_string());
         for error in &result.errors {
@@ -215,6 +217,47 @@ fn breakdown_table(breakdown: &[BreakdownRow]) -> Vec<String> {
     lines
 }
 
+/// One row per Key exposure, in the library's fixed order.
+fn exposure_table(exposure: &[ExposureRow]) -> Vec<String> {
+    let total_added: i64 = exposure.iter().map(ExposureRow::added_weight).sum();
+    let width = exposure
+        .iter()
+        .map(|row| key_exposure_name(row.key_exposure).len())
+        .max()
+        .unwrap_or(0);
+
+    let mut lines = vec![
+        "key exposure (mapped inputs, baseline input weight, migrated input weight, added weight, % of it, unmapped inputs, their baseline input weight):"
+            .to_string(),
+    ];
+    for row in exposure {
+        lines.push(format!(
+            "  {:<width$}  {:>8}  {:>12}  {:>12}  {:>12}  {:>6}  {:>8}  {:>12}",
+            key_exposure_name(row.key_exposure),
+            row.mapped_inputs,
+            row.baseline_weight,
+            row.migrated_weight,
+            row.added_weight(),
+            signed_percent(row.added_weight(), total_added),
+            row.unmapped_inputs,
+            row.unmapped_baseline_weight,
+        ));
+    }
+    lines
+}
+
+/// `part` as a percentage of `whole` to one decimal place, for signed values
+/// such as Added weight.
+fn signed_percent(part: i64, whole: i64) -> String {
+    if whole == 0 {
+        return "-".to_string();
+    }
+    // Display only, as in `percent`.
+    #[allow(clippy::cast_precision_loss)]
+    let ratio = part as f64 / whole as f64;
+    format!("{:.1}%", ratio * 100.0)
+}
+
 /// `part` as a percentage of `whole` to one decimal place, such as `64.4%`.
 fn percent(part: u64, whole: u64) -> String {
     if whole == 0 {
@@ -227,6 +270,15 @@ fn percent(part: u64, whole: u64) -> String {
     format!("{:.1}%", ratio * 100.0)
 }
 
+fn key_exposure_name(key_exposure: KeyExposure) -> &'static str {
+    match key_exposure {
+        KeyExposure::ExposedInOutput => "Exposed in output",
+        KeyExposure::HashedUntilSpend => "Hashed until spend",
+        KeyExposure::NoKey => "No key",
+        KeyExposure::Undetermined => "Undetermined",
+    }
+}
+
 fn unmapped_reason_name(reason: UnmappedReason) -> &'static str {
     match reason {
         UnmappedReason::P2trScriptPath => "P2TR script-path",
@@ -234,6 +286,8 @@ fn unmapped_reason_name(reason: UnmappedReason) -> &'static str {
         UnmappedReason::P2wshNonMultisig => "P2WSH non-multisig",
         UnmappedReason::P2shSegwitNonMultisig => "P2SH-wrapped segwit non-multisig",
         UnmappedReason::P2shNonMultisig => "P2SH non-multisig",
+        UnmappedReason::P2pk => "P2PK",
+        UnmappedReason::BareMultisig => "bare multisig",
         UnmappedReason::LegacyOther => "legacy other",
         UnmappedReason::Unknown => "unknown",
     }
@@ -284,12 +338,15 @@ fn migrate_human(migration: &Migration, baseline_vsize: u64, fee_rate: Option<Fe
                 template_weight,
                 ..
             } => format!(
-                "input {i}: mapped ({}), weight: {template_weight}",
-                spend_type_label(*spend_type)
+                "input {i}: mapped ({}), weight: {template_weight}, key exposure: {}",
+                spend_type_label(*spend_type),
+                key_exposure_name(spend_type.key_exposure())
             ),
-            InputResult::Unmapped { reason, .. } => {
-                format!("input {i}: unmapped ({})", unmapped_reason_name(*reason))
-            }
+            InputResult::Unmapped { reason, .. } => format!(
+                "input {i}: unmapped ({}), key exposure: {}",
+                unmapped_reason_name(*reason),
+                key_exposure_name(reason.key_exposure())
+            ),
         });
     }
     match &migration.migrated {
@@ -349,13 +406,15 @@ fn migrate_json(migration: &Migration, baseline_vsize: u64, fee_rate: Option<Fee
                     None => String::new(),
                 };
                 format!(
-                    r#"{{"status":"mapped","spend_type":"{}"{threshold},"template_weight":{template_weight}}}"#,
-                    spend_type_name(*spend_type)
+                    r#"{{"status":"mapped","spend_type":"{}"{threshold},"template_weight":{template_weight},"key_exposure":"{}"}}"#,
+                    spend_type_name(*spend_type),
+                    key_exposure_name(spend_type.key_exposure())
                 )
             }
             InputResult::Unmapped { reason, .. } => format!(
-                r#"{{"status":"unmapped","reason":"{}"}}"#,
-                unmapped_reason_name(*reason)
+                r#"{{"status":"unmapped","reason":"{}","key_exposure":"{}"}}"#,
+                unmapped_reason_name(*reason),
+                key_exposure_name(reason.key_exposure())
             ),
         })
         .collect();

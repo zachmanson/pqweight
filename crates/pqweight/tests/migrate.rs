@@ -928,19 +928,29 @@ fn p2sh_single_key_script_spend_is_unmapped_as_p2sh_non_multisig() {
 
 #[test]
 fn legacy_script_sigs_ending_in_a_signature_or_key_are_unmapped_as_legacy_other() {
+    // Filler signatures: the DER tag and a length, but no consistent DER
+    // structure, so they are not P2PK or bare multisig.
     let signature = der_signature(72);
     let mut uncompressed_key = [0u8; 65];
     uncompressed_key[0] = 0x04;
 
     // (name, scriptSig)
-    let cases: [(&str, Vec<u8>); 3] = [
-        ("P2PK", [&[72][..], &signature].concat()),
-        ("bare 2-of-3 multisig", {
+    let cases: [(&str, Vec<u8>); 4] = [
+        (
+            "P2PK shape with a non-DER signature",
+            [&[72][..], &signature].concat(),
+        ),
+        ("bare multisig shape with non-DER signatures", {
             let mut script_sig = vec![0x00];
             for _ in 0..2 {
                 script_sig.push(72);
                 script_sig.extend_from_slice(&signature);
             }
+            script_sig
+        }),
+        ("OP_0 then a public key", {
+            let mut script_sig = vec![0x00, 65];
+            script_sig.extend_from_slice(&uncompressed_key);
             script_sig
         }),
         ("P2PKH with a 74-byte signature", {
@@ -955,6 +965,56 @@ fn legacy_script_sigs_ending_in_a_signature_or_key_are_unmapped_as_legacy_other(
         let reason = unmapped_reason(&legacy_tx_with_script_sig(&script_sig));
         assert_eq!(reason, Some(UnmappedReason::LegacyOther), "{name}");
     }
+}
+
+#[test]
+fn legacy_script_sig_of_one_strict_der_signature_is_unmapped_as_p2pk() {
+    assert_eq!(
+        unmapped_reason(&legacy_tx(&[&strict_der_signature()])),
+        Some(UnmappedReason::P2pk)
+    );
+}
+
+#[test]
+fn legacy_script_sig_of_op_0_then_strict_der_signatures_is_unmapped_as_bare_multisig() {
+    let signature = strict_der_signature();
+    // (name, pushes after OP_0)
+    let cases: [(&str, Vec<&[u8]>); 2] = [
+        ("one signature (1-of-n)", vec![&signature]),
+        ("two signatures", vec![&signature, &signature]),
+    ];
+    for (name, signatures) in cases {
+        let pushes: Vec<&[u8]> = [&[][..]].into_iter().chain(signatures).collect();
+        assert_eq!(
+            unmapped_reason(&legacy_tx(&pushes)),
+            Some(UnmappedReason::BareMultisig),
+            "{name}"
+        );
+    }
+}
+
+#[test]
+fn mainnet_p2pk_and_bare_multisig_spends_are_unmapped_with_their_reasons() {
+    let p2pk = migrate(&load_fixture("p2pk"), ParameterSet::MlDsa44).expect("valid transaction");
+    let bare =
+        migrate(&load_fixture("bare-multisig"), ParameterSet::MlDsa44).expect("valid transaction");
+
+    let reasons = |migration: &pqweight::Migration| -> Vec<Option<UnmappedReason>> {
+        migration
+            .inputs
+            .iter()
+            .map(|input| match *input {
+                InputResult::Unmapped { reason, .. } => Some(reason),
+                InputResult::Mapped { .. } => None,
+            })
+            .collect()
+    };
+    assert_eq!(reasons(&p2pk), vec![Some(UnmappedReason::P2pk)]);
+    // Input 0 is an ordinary P2PKH spend.
+    assert_eq!(
+        reasons(&bare),
+        vec![None, Some(UnmappedReason::BareMultisig)]
+    );
 }
 
 #[test]

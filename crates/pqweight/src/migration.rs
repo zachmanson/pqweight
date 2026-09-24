@@ -43,6 +43,23 @@ impl ParameterSet {
     }
 }
 
+/// **Key exposure**: where an input's public key sat before this spend, as
+/// seen from the spending side. Names what was seen, never what an attacker
+/// could do: a key that is only hashed may already be public through address
+/// reuse, which the spending side can't show.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum KeyExposure {
+    /// The key is in the output itself (P2TR, P2PK, bare multisig): open to a
+    /// Long-exposure attack for as long as the coins sit there.
+    ExposedInOutput,
+    /// Only a hash was on-chain until this spend revealed the key.
+    HashedUntilSpend,
+    /// No key to attack (pay-to-anchor, coinbase).
+    NoKey,
+    /// The spend shape doesn't say where the key was.
+    Undetermined,
+}
+
 /// The kind of spend a real input performs today.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum BaselineSpendType {
@@ -91,6 +108,25 @@ impl BaselineSpendType {
     #[must_use]
     pub fn is_contract(self) -> bool {
         matches!(self, Self::P2wshContract | Self::P2shP2wshContract)
+    }
+
+    /// Where this spend type's public key sat before the spend.
+    #[must_use]
+    pub fn key_exposure(self) -> KeyExposure {
+        match self {
+            // A script-path output key is the internal key tweaked, so breaking
+            // it opens the key path whatever the leaves say.
+            Self::P2trKeyPath | Self::P2trScriptPathSingleKey => KeyExposure::ExposedInOutput,
+            Self::P2wpkh
+            | Self::P2shP2wpkh
+            | Self::P2pkh
+            | Self::P2wshMultisig(_)
+            | Self::P2shP2wshMultisig(_)
+            | Self::P2shMultisig(_)
+            | Self::P2wshContract
+            | Self::P2shP2wshContract => KeyExposure::HashedUntilSpend,
+            Self::PayToAnchor | Self::Coinbase => KeyExposure::NoKey,
+        }
     }
 
     /// The Multisig threshold of a multisig spend type, `None` for single-key ones.
@@ -161,11 +197,34 @@ pub enum UnmappedReason {
     /// Empty witness and a push-only scriptSig whose last push looks like a
     /// redeem script: not a signature or public key, and well-formed script ops.
     P2shNonMultisig,
-    /// Empty witness and any other non-empty scriptSig: P2PK, bare multisig, and
-    /// P2PKH spends outside the template's signature and key sizes.
+    /// Empty witness and a scriptSig of exactly one push, a strict-DER
+    /// signature: a P2PK spend, whose public key sits in the output itself.
+    P2pk,
+    /// Empty witness and a scriptSig of `OP_0` then one or more pushes, every one
+    /// a strict-DER signature, with no redeem script after them: a bare
+    /// multisig spend, whose public keys sit in the output itself.
+    BareMultisig,
+    /// Empty witness and any other non-empty scriptSig, such as P2PKH spends
+    /// outside the template's signature and key sizes.
     LegacyOther,
     /// None of the shapes above.
     Unknown,
+}
+
+impl UnmappedReason {
+    /// Where the public key of the shape this reason names sat before the spend.
+    #[must_use]
+    pub fn key_exposure(self) -> KeyExposure {
+        match self {
+            Self::P2trScriptPath | Self::P2trKeyPathAnnex | Self::P2pk | Self::BareMultisig => {
+                KeyExposure::ExposedInOutput
+            }
+            Self::P2wshNonMultisig | Self::P2shSegwitNonMultisig | Self::P2shNonMultisig => {
+                KeyExposure::HashedUntilSpend
+            }
+            Self::LegacyOther | Self::Unknown => KeyExposure::Undetermined,
+        }
+    }
 }
 
 impl InputResult {
@@ -514,6 +573,22 @@ fn unmapped_reason(input: &ParsedInput<'_>) -> UnmappedReason {
         && is_redeem_script_candidate(last)
     {
         return UnmappedReason::P2shNonMultisig;
+    }
+    if witness.is_empty()
+        && let Some(pushes) = read_push_only(input.script_sig)
+        && let [signature] = pushes.as_slice()
+        && is_strict_der_signature(signature)
+    {
+        return UnmappedReason::P2pk;
+    }
+    if witness.is_empty()
+        && let Some(pushes) = read_push_only(input.script_sig)
+        && let [dummy, signatures @ ..] = pushes.as_slice()
+        && dummy.is_empty()
+        && !signatures.is_empty()
+        && signatures.iter().all(|push| is_strict_der_signature(push))
+    {
+        return UnmappedReason::BareMultisig;
     }
     if witness.is_empty() && !input.script_sig.is_empty() {
         return UnmappedReason::LegacyOther;

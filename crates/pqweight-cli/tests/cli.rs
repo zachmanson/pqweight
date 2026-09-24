@@ -426,3 +426,75 @@ fn aggregate_command_prints_a_breakdown_by_spend_type_and_unmapped_reason() {
         "{text}"
     );
 }
+
+#[test]
+fn migrate_command_names_the_key_exposure_of_every_input() {
+    // (fixture, human input line, Key exposure). Weights and reasons as in the
+    // tests above.
+    let cases = [
+        (
+            "p2wpkh",
+            "input 0: mapped (P2WPKH), weight: 3903, key exposure: Hashed until spend",
+            "Hashed until spend",
+        ),
+        (
+            "p2tr-keypath-annex",
+            "input 0: unmapped (P2TR key-path with annex), key exposure: Exposed in output",
+            "Exposed in output",
+        ),
+    ];
+    for (name, line, key_exposure) in cases {
+        let fx = fixture(name);
+
+        let human = run(&["migrate", "--scheme", "ml-dsa-44", &fx.hex], None);
+        let json = run(
+            &["migrate", "--scheme", "ml-dsa-44", "--json", &fx.hex],
+            None,
+        );
+
+        assert!(stdout(&human).contains(line), "{}", stdout(&human));
+        let parsed: serde_json::Value = serde_json::from_str(&stdout(&json)).unwrap();
+        assert_eq!(parsed["inputs"][0]["key_exposure"], key_exposure, "{name}");
+    }
+}
+
+#[test]
+fn aggregate_command_prints_added_weight_by_key_exposure() {
+    let p2wpkh = p2wpkh_fixture();
+    let key_path_annex = fixture("p2tr-keypath-annex");
+    let path = scratch_file("exposure");
+    std::fs::write(
+        &path,
+        format!("{}\n{}\n{}\n", p2wpkh.hex, key_path_annex.hex, p2wpkh.hex),
+    )
+    .unwrap();
+
+    let output = run(
+        &["aggregate", "--scheme", "ml-dsa-44", path.to_str().unwrap()],
+        None,
+    );
+    std::fs::remove_file(&path).ok();
+
+    assert!(output.status.success(), "{}", stderr(&output));
+    let text = stdout(&output);
+    // Columns: mapped inputs, baseline Input weight, migrated, Added weight,
+    // % of all Added weight, Unmapped inputs, their baseline Input weight.
+    // P2WPKH: 2 x 270 = 540 today, 2 x 3903 = 7806 migrated, 7266 added: all of it.
+    // P2TR key-path with annex: Unmapped, 234.
+    assert_eq!(
+        row_after(&text, "Hashed until spend"),
+        ["2", "540", "7806", "7266", "100.0%", "0", "0"]
+    );
+    assert_eq!(
+        row_after(&text, "Exposed in output"),
+        ["0", "0", "0", "0", "0.0%", "1", "234"]
+    );
+    assert_eq!(
+        row_after(&text, "No key"),
+        ["0", "0", "0", "0", "0.0%", "0", "0"]
+    );
+    assert_eq!(
+        row_after(&text, "Undetermined"),
+        ["0", "0", "0", "0", "0.0%", "0", "0"]
+    );
+}

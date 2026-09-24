@@ -1,0 +1,10 @@
+{
+    "description":  "Mainnet bare 1-of-n multisig spend (OP_0 <sig>) as input 1, and a P2PKH input 0, 2 inputs. Tx eebc5344f7c72d3ef2fa1334bb388e027bd7b7855e0bc35da276293966e14adb, block 330001",
+    "oracle":  {
+                   "weight":  1680,
+                   "vsize":  420,
+                   "size":  420
+               },
+    "core_version":  "Satoshi:31.1.0",
+    "recorded_by":  "bitcoin-tx -json (mainnet transaction added by hand)"
+}

@@ -34,11 +34,11 @@ A library function `migrate(bytes, ParameterSet)` returns an **Input result** fo
 
 | Type | Plan |
 |---|---|
-| P2PK | Later, cheap. Mostly early coins, highly exposed to Long-exposure attack |
+| P2PK | Slice 7: recognized as an Unmapped reason and tagged Exposed in output, no template, see `issues/07-key-exposure.md`. Mostly early coins |
 | P2WSH / P2SH multisig, P2SH-P2WSH | Slice 3: literal-swap `CHECKMULTISIG` template, see `issues/02-multisig-templates.md` |
 | P2TR script-path | Slice 5: single-key leaves (one key, one `CHECKSIG`/`CHECKSIGVERIFY`), literal-swap template with a BIP-360-style control block, see `issues/05-p2tr-single-key-leaf.md`. `multi_a` and other multi-key leaves later |
 | Custom-script P2WSH / P2SH-P2WSH (hashlocks, timelocks, Lightning) | Slice 6: literal-swap template for any non-multisig witnessScript (every key and signature swapped, all else kept), see `issues/06-p2wsh-contract.md`. Bare P2SH non-multisig stays Unmapped |
-| Bare multisig | Stays Unmapped for now, rare |
+| Bare multisig | Slice 7: recognized as an Unmapped reason (`OP_0` then strict-DER signatures) and tagged Exposed in output, no template, see `issues/07-key-exposure.md`. Rare |
 | OP_RETURN | No inputs, no template |
 
 ## Testing Decisions
@@ -54,7 +54,7 @@ A library function `migrate(bytes, ParameterSet)` returns an **Input result** fo
 
 - Aggregation over blocks or many transactions, and reporting how many inputs are Unmapped overall.
 - Multisig, script-path and custom-script templates.
-- Long-exposure and Short-exposure tagging or analysis. This will be added later.
+- Long-exposure and Short-exposure tagging or analysis. Added in slice 7 as Key exposure tagging, see `issues/07-key-exposure.md`.
 - Fee-rate market modelling, such as block-space scarcity effects.
 - Fetching transactions or prevouts from a node at runtime.
 
