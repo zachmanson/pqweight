@@ -1,4 +1,4 @@
-Status: ready-for-agent
+Status: done
 
 # Second calculation of migrated weight
 
@@ -41,3 +41,14 @@ A **Second calculation** (glossary term, in `CONTEXT.md`): a stdlib-only Python 
 ## Source
 
 pq-migration spec (Testing Decisions), ADR 0001, ADR 0002.
+
+## Comments
+
+**2026-09-25, implemented** (commit 19ecf9f, sample record in the next commit).
+
+- `docs/migration-templates.md` written from the pq-migration spec and tickets 02, 05, 06 and ADR 0002, not from `migration.rs`. The Python was written from the doc only.
+- `migrate --json-lines [<path>]`: four CLI tests (file, stdin with a blank and a bad line, unreadable file, path plus hex). A lone argument after `--json-lines` is always read as the path, so `--json-lines <hex>` fails with "could not read" rather than the usage text. Error lines use a small JSON string escaper, which `assumptions` now also use instead of Rust `Debug` formatting.
+- Fixtures: 0 mismatches, every template compared at each parameter set except allow-listed pay-to-anchor. Sensitivity checked by breaking the Python: a 1-byte prefix for `OP_PUSHDATA2` pushes gave 122 mismatches, dropping the marker and flag broke the totals, and an empty allow-list failed on pay-to-anchor.
+- September sample: 25,154 mapped inputs compared per parameter set, 0 mismatches. See the "Second calculation" section of `docs/coverage/2026-09-sample.md`.
+- The review found a crash in the Python strict-DER check on a short `30`-tagged item (fixed), and noted that "strict DER" here means BIP66's layout only, without its sign and padding rules. The doc now says so. Both sides check the same thing.
+- The Python has no unit tests of its own. Like `shape-census.py`, it is a check, and it's checked end to end by the mutations above.
