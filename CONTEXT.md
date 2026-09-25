@@ -23,6 +23,10 @@ _Avoid_: Reference implementation, ground truth
 A raw transaction committed to the repo together with its Oracle values and the script that recorded them.
 _Avoid_: Test data, sample
 
+**Coverage sample**:
+A set of mainnet blocks, identified by hash, run through `aggregate` to measure how much real traffic the Migration templates cover. Unlike a Fixture it has no Oracle values, and its raw transactions aren't committed.
+_Avoid_: Test set, dataset
+
 **Migration template**:
 A hypothetical post-quantum spend layout for one baseline spend type, stating exactly what its witness would contain. Bitcoin has no PQ opcode today, so templates are the model's stated assumptions.
 _Avoid_: Scenario, PQ transaction type
