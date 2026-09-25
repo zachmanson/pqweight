@@ -1,3 +1,4 @@
+use std::fmt::Write as _;
 use std::io::Read;
 use std::process::ExitCode;
 
@@ -30,7 +31,7 @@ fn run(args: &[String]) -> Result<String, String> {
     }
 }
 
-const USAGE: &str = "usage: pqweight weight [--json] [<hex>]\n       pqweight migrate --scheme <scheme> [--fee-rate <rate>] [--json] [<hex>]\n       pqweight aggregate --scheme <scheme> [--fee-rate <rate>] [<path>]";
+const USAGE: &str = "usage: pqweight weight [--json] [<hex>]\n       pqweight migrate --scheme <scheme> [--fee-rate <rate>] [--json] [<hex>]\n       pqweight migrate --scheme <scheme> [--fee-rate <rate>] --json-lines [<path>]\n       pqweight aggregate --scheme <scheme> [--fee-rate <rate>] [<path>]";
 
 fn run_weight(args: &[String]) -> Result<String, String> {
     let json = args.iter().any(|arg| arg == "--json");
@@ -88,18 +89,58 @@ fn parse_scheme_and_fee_rate_args(
 
 fn run_migrate(args: &[String]) -> Result<String, String> {
     let json = args.iter().any(|arg| arg == "--json");
+    let json_lines = args.iter().any(|arg| arg == "--json-lines");
     let args: Vec<String> = args
         .iter()
-        .filter(|arg| *arg != "--json")
+        .filter(|arg| *arg != "--json" && *arg != "--json-lines")
         .cloned()
         .collect();
     let (parameter_set, fee_rate, positional) = parse_scheme_and_fee_rate_args(&args)?;
+
+    if json_lines {
+        let text = read_path_or_stdin(&positional)?;
+        return Ok(migrate_json_lines(&text, parameter_set, fee_rate));
+    }
 
     let hex = match positional.as_slice() {
         [hex] => (*hex).to_string(),
         [] => read_stdin()?,
         _ => return Err(USAGE.to_string()),
     };
+    migrate_one(&hex, parameter_set, fee_rate, json)
+}
+
+/// `migrate --json` over every non-blank line of `text`, one output line each.
+/// A line that fails prints `{"line":N,"error":"..."}` (N 1-indexed, counting
+/// blank lines) and the batch continues, as in `aggregate`.
+fn migrate_json_lines(
+    text: &str,
+    parameter_set: ParameterSet,
+    fee_rate: Option<FeeRate>,
+) -> String {
+    text.lines()
+        .enumerate()
+        .filter(|(_, line)| !line.trim().is_empty())
+        .map(|(index, line)| {
+            migrate_one(line, parameter_set, fee_rate, true).unwrap_or_else(|message| {
+                format!(
+                    r#"{{"line":{},"error":{}}}"#,
+                    index + 1,
+                    json_string(&message)
+                )
+            })
+        })
+        .collect::<Vec<_>>()
+        .join("\n")
+}
+
+/// One transaction's `migrate` output, human or JSON.
+fn migrate_one(
+    hex: &str,
+    parameter_set: ParameterSet,
+    fee_rate: Option<FeeRate>,
+    json: bool,
+) -> Result<String, String> {
     let bytes = decode_hex(hex.trim())?;
     let baseline = pqweight::transaction_weight(&bytes).map_err(|err| err.to_string())?;
     let migration = pqweight::migrate(&bytes, parameter_set).map_err(|err| err.to_string())?;
@@ -114,13 +155,7 @@ fn run_migrate(args: &[String]) -> Result<String, String> {
 fn run_aggregate(args: &[String]) -> Result<String, String> {
     let (parameter_set, fee_rate, positional) = parse_scheme_and_fee_rate_args(args)?;
 
-    let text = match positional.as_slice() {
-        [path] => {
-            std::fs::read_to_string(path).map_err(|err| format!("could not read {path}: {err}"))?
-        }
-        [] => read_stdin()?,
-        _ => return Err(USAGE.to_string()),
-    };
+    let text = read_path_or_stdin(&positional)?;
 
     let result = aggregate(text.lines().map(str::to_string), parameter_set, fee_rate);
     Ok(aggregate_human(&result))
@@ -436,7 +471,7 @@ fn migrate_json(migration: &Migration, baseline_vsize: u64, fee_rate: Option<Fee
     let assumptions: Vec<String> = migration
         .assumptions
         .iter()
-        .map(|a| format!("{a:?}"))
+        .map(|a| json_string(a))
         .collect();
 
     let fee_field = match (fee_rate, &migration.migrated) {
@@ -456,6 +491,36 @@ fn migrate_json(migration: &Migration, baseline_vsize: u64, fee_rate: Option<Fee
         inputs.join(","),
         assumptions.join(","),
     )
+}
+
+/// The text of the file at the one positional argument, or of stdin if there
+/// is none. With `--json-lines` a lone argument is always read as the path.
+fn read_path_or_stdin(positional: &[&str]) -> Result<String, String> {
+    match positional {
+        [path] => {
+            std::fs::read_to_string(path).map_err(|err| format!("could not read {path}: {err}"))
+        }
+        [] => read_stdin(),
+        _ => Err(USAGE.to_string()),
+    }
+}
+
+/// `text` as a JSON string literal, quotes included.
+fn json_string(text: &str) -> String {
+    let mut out = String::from('"');
+    for c in text.chars() {
+        match c {
+            '"' => out.push_str("\\\""),
+            '\\' => out.push_str("\\\\"),
+            c if c.is_control() => {
+                // Writing to a String never fails.
+                let _ = write!(out, "\\u{:04x}", u32::from(c));
+            }
+            c => out.push(c),
+        }
+    }
+    out.push('"');
+    out
 }
 
 fn read_stdin() -> Result<String, String> {

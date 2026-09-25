@@ -23,3 +23,11 @@ jobs:
       - run: cargo fmt --all --check
       - run: cargo clippy --workspace --all-targets -- -D warnings
       - run: cargo test --workspace
+      # Second calculation (ticket 21): rebuilds every mapped input's migrated bytes from
+      # docs/migration-templates.md and checks pqweight's migrated weights, on every
+      # Fixture at all three parameter sets. Stdlib-only Python.
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - run: cargo build -p pqweight-cli
+      - run: python scripts/second-calculation.py target/debug/pqweight --fixtures crates/pqweight/tests/fixtures

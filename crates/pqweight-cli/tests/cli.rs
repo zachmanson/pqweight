@@ -498,3 +498,107 @@ fn aggregate_command_prints_added_weight_by_key_exposure() {
         ["0", "0", "0", "0", "0.0%", "0", "0"]
     );
 }
+
+#[test]
+fn migrate_json_lines_prints_one_migrate_json_object_per_line_of_a_file() {
+    let wpkh = p2wpkh_fixture();
+    let multisig = fixture("p2wsh-multisig");
+    let path = scratch_file("json-lines");
+    std::fs::write(&path, format!("{}\n{}\n", wpkh.hex, multisig.hex)).unwrap();
+
+    let output = run(
+        &[
+            "migrate",
+            "--scheme",
+            "ml-dsa-44",
+            "--json-lines",
+            path.to_str().unwrap(),
+        ],
+        None,
+    );
+    std::fs::remove_file(&path).ok();
+
+    assert!(output.status.success(), "{}", stderr(&output));
+    let text = stdout(&output);
+    let lines: Vec<&str> = text.lines().collect();
+    assert_eq!(lines.len(), 2, "{text}");
+    // Each line is exactly what `migrate --json` prints for that transaction.
+    for (line, fx) in lines.iter().zip([&wpkh, &multisig]) {
+        let single = run(
+            &["migrate", "--scheme", "ml-dsa-44", "--json", &fx.hex],
+            None,
+        );
+        assert_eq!(*line, stdout(&single).trim_end());
+    }
+    let first: serde_json::Value = serde_json::from_str(lines[0]).expect("valid JSON");
+    assert_eq!(first["migrated"]["weight"], 4069);
+}
+
+#[test]
+fn migrate_json_lines_reads_stdin_skips_blank_lines_and_reports_a_bad_line_in_place() {
+    let fx = p2wpkh_fixture();
+
+    let output = run(
+        &["migrate", "--scheme", "ml-dsa-44", "--json-lines"],
+        Some(&format!("{}\n\nzz\n{}\n", fx.hex, fx.hex)),
+    );
+
+    assert!(output.status.success(), "{}", stderr(&output));
+    let text = stdout(&output);
+    let lines: Vec<serde_json::Value> = text
+        .lines()
+        .map(|line| serde_json::from_str(line).expect("valid JSON"))
+        .collect();
+    assert_eq!(lines.len(), 3, "{text}");
+    assert_eq!(lines[0]["migrated"]["weight"], 4069);
+    // Line numbers count the blank line, as `aggregate`'s do.
+    assert_eq!(lines[1]["line"], 3);
+    assert!(
+        lines[1]["error"]
+            .as_str()
+            .is_some_and(|e| e.contains("hex")),
+        "{text}"
+    );
+    assert_eq!(lines[2]["migrated"]["weight"], 4069);
+}
+
+#[test]
+fn migrate_json_lines_fails_when_the_file_cannot_be_read() {
+    let output = run(
+        &[
+            "migrate",
+            "--scheme",
+            "ml-dsa-44",
+            "--json-lines",
+            "no-such-file.txt",
+        ],
+        None,
+    );
+
+    assert!(!output.status.success());
+    assert!(
+        stderr(&output).contains("no-such-file.txt"),
+        "{}",
+        stderr(&output)
+    );
+}
+
+#[test]
+fn migrate_json_lines_with_a_path_and_a_hex_argument_is_a_usage_error() {
+    let fx = p2wpkh_fixture();
+
+    let output = run(
+        &[
+            "migrate",
+            "--scheme",
+            "ml-dsa-44",
+            "--json-lines",
+            "sample.txt",
+            &fx.hex,
+        ],
+        None,
+    );
+
+    assert!(!output.status.success());
+    assert!(stderr(&output).contains("usage"), "{}", stderr(&output));
+}

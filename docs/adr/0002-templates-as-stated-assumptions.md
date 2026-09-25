@@ -5,3 +5,5 @@ Bitcoin has no PQ opcode, and today's rules reject witness items over 520 bytes,
 The 520-byte limit is stated for stack elements, not only witness items, because the P2TR script-path template (ticket 05) also pushes a PQ public key inside a tapscript leaf, and that push breaks the same limit.
 
 The P2TR script-path template assumes migrated script-path outputs commit to the script tree's Merkle root directly, with no internal key and no key path, as in BIP-360. The control block is then the leaf-version byte plus the Merkle path. A NUMS internal key would not protect today's Taproot outputs from a quantum attacker, who can derive the output key's private key and spend by key path, so the key path has to go. Keeping the internal key with the key path disabled by a soft fork would also work, but no proposal specifies it, and the key-path template already assumes PQ outputs commit to a hash rather than an elliptic-curve key.
+
+The exact migrated bytes of every template, the assumptions above made concrete, are in [`docs/migration-templates.md`](../migration-templates.md).
