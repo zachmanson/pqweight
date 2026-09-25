@@ -68,3 +68,7 @@ A new Baseline spend type, **P2TR script-path single-key**, with a literal-swap 
 - Script-path spends with an annex.
 - The P2WSH two-key hashlock/CLTV contract that dominates P2WSH non-multisig.
 - Long/Short-exposure tagging.
+
+## Comments
+
+**2026-09-24, ticket 08 census: annex rule (decision 6) unchanged.** No taproot spend with an annex in either sample. See `docs/coverage/2026-q2-sample.md`.

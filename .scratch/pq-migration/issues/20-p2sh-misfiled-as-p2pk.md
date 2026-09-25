@@ -21,3 +21,5 @@ Ticket 07 (coverage report Assumptions edit).
 ## Comments
 
 **2026-09-24, wontfix.** A P2SH redeem script that is itself a valid strict-DER signature is not a script anyone would realistically use. Slice 7 already documents the case in the coverage report's Assumptions list, and that is enough. Reopen if ticket 08 finds a case.
+
+**2026-09-24, ticket 08 census: stays wontfix.** No input was filed P2PK in either sample, so there was nothing to misfile. See `docs/coverage/2026-q2-sample.md`.

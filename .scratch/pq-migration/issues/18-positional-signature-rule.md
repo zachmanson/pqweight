@@ -23,3 +23,5 @@ Ticket 05 (Out of Scope and acceptance 2).
 ## Comments
 
 **2026-09-24, wontfix.** The coverage report's "After slice 5" section says the size rule "turned away no inputs" in the September 2026 sample, and the size rule is simpler than tracking stack positions. Reopen if ticket 08's sample finds script-path stacks with more than one 64 or 65-byte item.
+
+**2026-09-24, ticket 08 census: stays wontfix.** No leaf with one signature check had more than one 64 or 65-byte stack item in either sample. See `docs/coverage/2026-q2-sample.md`.

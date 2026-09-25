@@ -1,4 +1,4 @@
-Status: ready-for-agent
+Status: done
 
 # Second coverage sample
 
@@ -45,3 +45,7 @@ Measure a second **Coverage sample** (glossary term, in `CONTEXT.md`) chosen by 
 ## Source
 
 Ticket 05 (inscription burst, positional-signature follow-up), ticket 07 decision 1 (second sample listed as an alternative).
+
+## Comments
+
+**2026-09-24, done.** Results in `docs/coverage/2026-q2-sample.md`. Only multi-key leaves turned up (0.29% of Input weight, below the threshold), so 09 and 16 stay in the backlog, 18 and 20 stay wontfix, and the annex rule is unchanged. The ticket 18 count is restricted to leaves with one signature check: two-key leaves carry two 64-byte signatures legitimately.
