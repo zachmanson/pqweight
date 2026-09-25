@@ -23,6 +23,10 @@ _Avoid_: Reference implementation, ground truth
 A raw transaction committed to the repo together with its Oracle values and the script that recorded them.
 _Avoid_: Test data, sample
 
+**Second calculation**:
+An independent reimplementation of the Migration templates that builds the migrated bytes and measures them, compared against pqweight's migrated weights. It takes each input's Baseline spend type from pqweight rather than classifying again. Agreement shows the arithmetic matches the stated templates, not that the templates are right, so it is never an Oracle.
+_Avoid_: Oracle, cross-validation
+
 **Coverage sample**:
 A set of mainnet blocks, identified by hash, run through `aggregate` to measure how much real traffic the Migration templates cover. Unlike a Fixture it has no Oracle values, and its raw transactions aren't committed.
 _Avoid_: Test set, dataset
