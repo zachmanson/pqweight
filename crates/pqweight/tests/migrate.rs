@@ -683,15 +683,13 @@ fn p2wsh_contract_with_checkmultisig_inside_swaps_every_key_in_the_script() {
     assert_eq!(total.vsize, 2945);
 }
 
-/// A 72-byte ECDSA signature with a consistent DER structure: `30 45 02 21
-/// <33-byte r> 02 20 <32-byte s>` and a sighash byte.
-fn strict_der_signature() -> Vec<u8> {
-    let mut signature = vec![0x30, 0x45, 0x02, 0x21];
-    signature.extend_from_slice(&[1u8; 33]);
-    signature.extend_from_slice(&[0x02, 0x20]);
-    signature.extend_from_slice(&[1u8; 32]);
-    signature.push(0x01);
-    signature
+/// `len` bytes starting with the DER sequence tag `0x30`, then zeros: the tag
+/// and a signature's length, but `r` is 0 bytes long and `s` is missing, so
+/// the structure isn't DER.
+fn der_lookalike(len: usize) -> Vec<u8> {
+    let mut item = vec![0u8; len];
+    item[0] = 0x30;
+    item
 }
 
 #[test]
@@ -702,8 +700,8 @@ fn p2wsh_contract_swaps_every_key_shaped_push_and_keeps_der_lookalikes() {
     // the signature check, and the second is uncompressed. 34 + 1 + 66 + 1 = 102 bytes.
     let script: &[u8] = &[compressed, &[0x7c], uncompressed, &[0xac]].concat();
     // Starts with the DER tag and is 72 bytes, but its structure is not DER.
-    let der_lookalike = der_signature(72);
-    let tx = segwit_tx(&[], &[&strict_der_signature(), &der_lookalike, script]);
+    let der_lookalike = der_lookalike(72);
+    let tx = segwit_tx(&[], &[&der_signature(72), &der_lookalike, script]);
 
     let migration = migrate(&tx, ParameterSet::MlDsa44).expect("valid transaction");
 
@@ -720,7 +718,7 @@ fn p2wsh_contract_swaps_every_key_shaped_push_and_keeps_der_lookalikes() {
 fn p2wsh_contract_carries_items_with_a_broken_der_structure_as_data() {
     let compressed: &[u8] = &[&[0x21, 0x02][..], &[5u8; 32]].concat();
     let script: &[u8] = &[compressed, &[0xac]].concat();
-    let valid = strict_der_signature();
+    let valid = der_signature(72);
     let with_byte = |index: usize, value: u8| {
         let mut item = valid.clone();
         item[index] = value;
@@ -930,7 +928,7 @@ fn p2sh_single_key_script_spend_is_unmapped_as_p2sh_non_multisig() {
 fn legacy_script_sigs_ending_in_a_signature_or_key_are_unmapped_as_legacy_other() {
     // Filler signatures: the DER tag and a length, but no consistent DER
     // structure, so they are not P2PK or bare multisig.
-    let signature = der_signature(72);
+    let signature = der_lookalike(72);
     let mut uncompressed_key = [0u8; 65];
     uncompressed_key[0] = 0x04;
 
@@ -970,14 +968,14 @@ fn legacy_script_sigs_ending_in_a_signature_or_key_are_unmapped_as_legacy_other(
 #[test]
 fn legacy_script_sig_of_one_strict_der_signature_is_unmapped_as_p2pk() {
     assert_eq!(
-        unmapped_reason(&legacy_tx(&[&strict_der_signature()])),
+        unmapped_reason(&legacy_tx(&[&der_signature(72)])),
         Some(UnmappedReason::P2pk)
     );
 }
 
 #[test]
 fn legacy_script_sig_of_op_0_then_strict_der_signatures_is_unmapped_as_bare_multisig() {
-    let signature = strict_der_signature();
+    let signature = der_signature(72);
     // (name, pushes after OP_0)
     let cases: [(&str, Vec<&[u8]>); 2] = [
         ("one signature (1-of-n)", vec![&signature]),
@@ -1075,6 +1073,21 @@ fn p2wpkh_accepts_der_signatures_of_9_to_73_bytes_and_rejects_others() {
             "signature of {sig_len} bytes"
         );
     }
+}
+
+/// A 72-byte item with the DER tag and a signature's length whose `r` length
+/// byte says 34 instead of 33, so `s` doesn't start where the tags say.
+fn der_with_inconsistent_r_length() -> Vec<u8> {
+    let mut item = der_signature(72);
+    item[3] = 0x22;
+    item
+}
+
+#[test]
+fn p2wpkh_signature_must_have_consistent_der_lengths() {
+    let tx = segwit_tx(&[], &[&der_with_inconsistent_r_length(), &[2u8; 33]]);
+
+    assert!(!is_mapped_as(&tx, BaselineSpendType::P2wpkh));
 }
 
 #[test]
@@ -1181,6 +1194,18 @@ fn p2sh_p2wpkh_accepts_a_short_der_signature() {
 }
 
 #[test]
+fn p2sh_p2wpkh_signature_must_have_consistent_der_lengths() {
+    let mut redeem_script_push = vec![0x16, 0x00, 0x14];
+    redeem_script_push.extend_from_slice(&[0u8; 20]);
+    let tx = segwit_tx(
+        &redeem_script_push,
+        &[&der_with_inconsistent_r_length(), &[2u8; 33]],
+    );
+
+    assert!(!is_mapped_as(&tx, BaselineSpendType::P2shP2wpkh));
+}
+
+#[test]
 fn p2sh_p2wpkh_input_is_migrated_keeping_the_redeem_script_scriptsig() {
     let tx = load_fixture("p2sh-p2wpkh");
 
@@ -1220,6 +1245,13 @@ fn p2pkh_accepts_a_short_der_signature_and_rejects_a_non_der_one() {
 
     assert!(is_mapped_as(&short, BaselineSpendType::P2pkh));
     assert!(!is_mapped_as(&not_der, BaselineSpendType::P2pkh));
+}
+
+#[test]
+fn p2pkh_signature_must_have_consistent_der_lengths() {
+    let tx = legacy_tx(&[&der_with_inconsistent_r_length(), &[2u8; 33]]);
+
+    assert!(!is_mapped_as(&tx, BaselineSpendType::P2pkh));
 }
 
 #[test]
@@ -1419,6 +1451,30 @@ fn p2wsh_multisig_accepts_a_short_der_signature() {
     assert!(is_mapped_as(
         &tx,
         BaselineSpendType::P2wshMultisig(MultisigThreshold { m: 2, n: 3 })
+    ));
+}
+
+#[test]
+fn multisig_signatures_must_have_consistent_der_lengths() {
+    let key = [2u8; 33];
+    let script = multisig_script(&op_n(2), &[&key, &key, &key], &op_n(3));
+    let signature = der_signature(72);
+    let inconsistent = der_with_inconsistent_r_length();
+
+    let native_segwit = segwit_tx(&[], &[&[], &signature, &inconsistent, &script]);
+    let legacy_p2sh = legacy_tx_with_script_sig(&p2sh_multisig_script_sig(
+        &[&signature, &inconsistent],
+        &script,
+    ));
+
+    let threshold = MultisigThreshold { m: 2, n: 3 };
+    assert!(!is_mapped_as(
+        &native_segwit,
+        BaselineSpendType::P2wshMultisig(threshold)
+    ));
+    assert!(!is_mapped_as(
+        &legacy_p2sh,
+        BaselineSpendType::P2shMultisig(threshold)
     ));
 }
 

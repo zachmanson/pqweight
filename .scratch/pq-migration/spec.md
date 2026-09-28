@@ -15,7 +15,7 @@ A library function `migrate(bytes, ParameterSet)` returns an **Input result** fo
 - Slice 1 works on one transaction. Aggregation over many transactions, multisig and script-path templates, and Long/Short-exposure tagging are later slices.
 - **Baseline spend types** in slice 1: P2WPKH, P2TR key-path, P2SH-P2WPKH, P2PKH, plus pay-to-anchor as a no-op (empty witness, nothing to migrate, must not count as Unmapped).
 - Classification is conservative and based on the spending side only (scriptSig and witness shape):
-  - P2WPKH: empty scriptSig, witness of 2 items, a DER signature (70 to 73 bytes; widened to `0x30` and 9 to 73 bytes by `issues/04-short-der-signatures.md`) and a 33-byte pubkey.
+  - P2WPKH: empty scriptSig, witness of 2 items, a DER signature (70 to 73 bytes; widened to `0x30` and 9 to 73 bytes by `issues/04-short-der-signatures.md`, then to a consistent DER structure, the check every template uses, by `issues/17-strict-der-in-fixed-templates.md`) and a 33-byte pubkey.
   - P2TR key-path: empty scriptSig, witness of exactly 1 item of 64 or 65 bytes. Anything with an annex is Unmapped.
   - P2SH-P2WPKH: scriptSig is one push of exactly `0014<20 bytes>`, witness as for P2WPKH.
   - P2PKH: empty witness, scriptSig of two pushes, a DER signature and a 33 or 65-byte pubkey.

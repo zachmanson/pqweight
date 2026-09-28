@@ -842,9 +842,11 @@ impl ContractSpend<'_> {
 
 /// An ECDSA signature with BIP-66's DER structure: `30 <len> 02 <r len> <r>
 /// 02 <s len> <s>`, every length consistent, `r` and `s` non-empty, then a
-/// sighash byte. A contract's stack can hold data where the fixed-layout
-/// templates can't, and a random 32-byte preimage starts with the `0x30` tag
-/// about once in 256, so the tag and length alone aren't enough here.
+/// sighash byte. DER drops leading zero bytes of `r` and `s`, so real
+/// signatures can be shorter than the usual 71 or 72 bytes. Every template
+/// recognizes a signature this way: a contract's stack can hold data, and a
+/// random 32-byte preimage starts with the `0x30` tag about once in 256, so
+/// the tag and length alone aren't enough.
 fn is_strict_der_signature(item: &[u8]) -> bool {
     let [0x30, sequence_len, 0x02, r_len, rest @ ..] = item else {
         return false;
@@ -914,7 +916,7 @@ fn contract_spend<'a>(witness: &'a [&'a [u8]]) -> Option<ContractSpend<'a>> {
 /// A scriptSig of exactly a DER signature and a 33 or 65-byte public key.
 fn is_der_signature_and_legacy_pubkey(pushes: &[&[u8]]) -> bool {
     matches!(pushes, [signature, pubkey]
-        if looks_like_der_signature(signature) && matches!(pubkey.len(), 33 | 65))
+        if is_strict_der_signature(signature) && matches!(pubkey.len(), 33 | 65))
 }
 
 /// Reads `script_sig` as a sequence of direct data pushes (opcodes 0x01 to 0x4b,
@@ -935,16 +937,18 @@ fn read_direct_pushes(script_sig: &[u8]) -> Option<Vec<&[u8]>> {
     Some(pushes)
 }
 
-/// A witness of exactly a DER signature (see [`looks_like_der_signature`])
-/// and a 33-byte compressed public key. Lengths only; nothing is verified.
+/// A witness of exactly a DER signature (see [`is_strict_der_signature`])
+/// and a 33-byte compressed public key. Structure only; nothing is verified.
 fn is_der_signature_and_compressed_pubkey(witness: &[&[u8]]) -> bool {
     matches!(witness, [signature, pubkey]
-        if looks_like_der_signature(signature) && pubkey.len() == 33)
+        if is_strict_der_signature(signature) && pubkey.len() == 33)
 }
 
-/// The DER sequence tag `0x30` and 9 to 73 bytes, sighash byte included. DER
-/// drops leading zero bytes of `r` and `s`, so real signatures can be shorter
-/// than the usual 71 or 72 bytes.
+/// The DER sequence tag `0x30` and 9 to 73 bytes, sighash byte included.
+/// Deliberately looser than [`is_strict_der_signature`], which every template
+/// uses: this only rules a push out as a redeem script when picking an
+/// Unmapped reason, and a malformed signature is still more likely than a
+/// script there.
 fn looks_like_der_signature(item: &[u8]) -> bool {
     item.first() == Some(&0x30) && (9..=73).contains(&item.len())
 }
@@ -982,7 +986,7 @@ impl KeySizes {
 }
 
 /// The threshold of a spend whose stack items are `[dummy, m signatures, script]`,
-/// where the dummy is empty, each signature looks like DER (see [`looks_like_der_signature`])
+/// where the dummy is empty, each signature is DER (see [`is_strict_der_signature`])
 /// and the script is exactly `OP_m <n keys> OP_n OP_CHECKMULTISIG` with
 /// keys of `key_sizes`. Lengths and structure only; nothing is verified.
 fn multisig_threshold(items: &[&[u8]], key_sizes: KeySizes) -> Option<MultisigThreshold> {
@@ -991,7 +995,7 @@ fn multisig_threshold(items: &[&[u8]], key_sizes: KeySizes) -> Option<MultisigTh
     };
     let threshold = parse_multisig_script(script, key_sizes)?;
     let signatures_match = signatures.len() == usize::from(threshold.m)
-        && signatures.iter().all(|s| looks_like_der_signature(s));
+        && signatures.iter().all(|s| is_strict_der_signature(s));
     (dummy.is_empty() && signatures_match).then_some(threshold)
 }
 

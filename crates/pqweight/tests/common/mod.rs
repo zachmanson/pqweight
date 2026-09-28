@@ -30,10 +30,21 @@ pub fn fixture_hex_paths() -> Vec<PathBuf> {
     paths
 }
 
-/// A stand-in ECDSA signature of `len` bytes: the DER sequence tag `0x30`,
-/// then filler. Only the tag and the length matter to classification.
+/// A stand-in ECDSA signature of `len` bytes with BIP-66's DER structure:
+/// `30 <len> 02 <r len> <r> 02 <s len> <s>` and a sighash byte, the 7 bytes
+/// of framing leaving `len - 7` for `r` and `s`, split as evenly as possible.
+/// Below 9 bytes `s` is empty and above 73 the whole is too long, so neither
+/// is a signature.
 pub fn der_signature(len: usize) -> Vec<u8> {
-    let mut signature = vec![0u8; len];
-    signature[0] = 0x30;
+    let body = len.checked_sub(7).expect("at least 7 bytes of framing");
+    let s_len = body / 2;
+    let r_len = body - s_len;
+    let byte = |n: usize| u8::try_from(n).expect("DER length fits a byte");
+    let mut signature = vec![0x30, byte(4 + body), 0x02, byte(r_len)];
+    signature.extend(std::iter::repeat_n(1u8, r_len));
+    signature.extend_from_slice(&[0x02, byte(s_len)]);
+    signature.extend(std::iter::repeat_n(1u8, s_len));
+    signature.push(0x01);
+    assert_eq!(signature.len(), len);
     signature
 }
