@@ -25,3 +25,5 @@ Tickets 02, 05 and 06 (Out of Scope), ticket 07 decision 1.
 ## Comments
 
 **2026-09-24, ticket 08 census: stays in the backlog.** Below the 0.5% of Input weight threshold in both samples: `multi_a` 109 inputs (0.20%) and other multi-key leaves 25 (0.09%) in the April to June 2026 sample, 2 two-key leaves (0.015%) in September. It's the only deciding shape that turned up, and it grew from 2 inputs to 134, so check it again in a third sample. See `docs/coverage/2026-q2-sample.md`.
+
+**2026-09-28, triage: stays in the backlog.** Multi-key leaves are 0.29% of Input weight in the April to June sample, under ticket 08's 0.5% threshold. Pick it up when a Coverage sample puts them over 0.5%.

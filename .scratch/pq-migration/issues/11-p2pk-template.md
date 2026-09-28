@@ -1,6 +1,8 @@
-Status: needs-triage
+Status: wontfix
 
 # P2PK migration template
+
+Reopen if: a concrete proposal specifies a rescue spend for P2PK coins with a real witness layout
 
 ## Problem Statement
 
@@ -18,3 +20,7 @@ Slice 7 recognizes P2PK spends as an Unmapped reason and tags them Exposed in ou
 ## Source
 
 Ticket 07 decision 1, pq-migration spec ("Other Baseline spend types", P2PK row).
+
+## Comments
+
+**2026-09-28, wontfix.** No input was filed P2PK in either Coverage sample (0 of 25,156 inputs in September, 0 of 69,810 in April to June 2026). A template also can't add anything: a P2PK output commits to the raw key, so there's no hash to swap for a PQ key. Before an ECDSA-disabling soft fork the spend is today's ECDSA spend unchanged (0 Added weight); after it the coin can't be spent at all without a rescue mechanism nobody has specified. The question behind this ticket, what it costs to move Exposed coins to PQ outputs, is about unspent coins rather than spends, so it moved to `22-move-cost-exposed-coins.md`.

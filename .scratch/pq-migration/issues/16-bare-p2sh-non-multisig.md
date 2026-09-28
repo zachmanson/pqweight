@@ -1,6 +1,8 @@
-Status: needs-triage
+Status: wontfix
 
 # Bare P2SH non-multisig spends
+
+Reopen if: any Coverage sample finds a bare P2SH non-multisig spend
 
 ## Problem Statement
 
@@ -21,3 +23,5 @@ Ticket 06 (decision 7 and Out of Scope), pq-migration spec (custom-script row).
 ## Comments
 
 **2026-09-24, ticket 08 census: stays in the backlog.** No bare P2SH non-multisig spend in either sample (0 of 25,156 inputs in September, 0 of 69,810 in April to June 2026). See `docs/coverage/2026-q2-sample.md`.
+
+**2026-09-28, wontfix.** 0 inputs in both Coverage samples (see the 2026-09-24 comment). Reopen if any later sample finds a bare P2SH non-multisig spend, the same rule as tickets 18 and 20.

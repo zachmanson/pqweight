@@ -1,4 +1,4 @@
-Status: needs-triage
+Status: ready-for-agent
 
 # Strict DER checking in the fixed-layout templates
 
@@ -17,3 +17,13 @@ Ticket 04 loosened the signature check in the fixed-layout templates (P2WPKH, P2
 ## Source
 
 Ticket 04 (Out of Scope), ticket 06 (Out of Scope).
+
+## Comments
+
+**2026-09-28, triage: ready-for-agent.** Decisions:
+
+1. **The fixed-layout templates (P2WPKH, P2SH-P2WPKH, P2PKH) switch to the strict DER check** that slices 6 and 7 use, so the codebase has one definition of "looks like a signature". Ticket 04's short-DER bug showed a loose check can misfile inputs, so this isn't only cosmetic.
+2. **Acceptance:**
+   - a unit test per fixed-layout template: a stack item that starts `0x30` with a valid overall length but inconsistent inner `r`/`s` lengths is no longer accepted as a signature;
+   - all existing Fixtures and the Second calculation still pass;
+   - rerun the September Coverage sample and record in `docs/coverage/2026-09-sample.md` whether any input changes Baseline spend type or becomes Unmapped (expected: none).
