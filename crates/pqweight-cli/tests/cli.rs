@@ -1,5 +1,6 @@
 //! Smoke tests for the `pqweight` binary: arguments and stdin in; stdout, stderr and
-//! exit code out. The CLI holds no logic, so these only check the wiring. Weight
+//! exit code out. The CLI computes no weights, so these check the wiring and
+//! what only the CLI decides: output formats and the order of report rows. Weight
 //! correctness is covered by the library's Fixture test.
 
 use std::io::Write;
@@ -184,6 +185,37 @@ fn migrate_command_json_flag_prints_machine_readable_output() {
             .is_some_and(|a| !a.is_empty())
     );
     assert_eq!(json["inputs"][0]["spend_type"], "P2WPKH");
+}
+
+#[test]
+fn migrate_command_json_reports_the_baseline_transaction_and_each_input_baseline_weight() {
+    let fx = p2wpkh_fixture();
+    let annex = fixture("p2tr-keypath-annex");
+
+    let mapped = run(
+        &["migrate", "--scheme", "ml-dsa-44", "--json", &fx.hex],
+        None,
+    );
+    let unmapped = run(
+        &["migrate", "--scheme", "ml-dsa-44", "--json", &annex.hex],
+        None,
+    );
+
+    let mapped: serde_json::Value = serde_json::from_str(&stdout(&mapped)).expect("valid JSON");
+    // The Oracle's numbers; stripped size from weight = 3 x stripped + total.
+    assert_eq!(mapped["baseline"]["weight"], fx.weight);
+    assert_eq!(mapped["baseline"]["vsize"], fx.vsize);
+    assert_eq!(mapped["baseline"]["total_size"], fx.size);
+    assert_eq!(
+        mapped["baseline"]["stripped_size"],
+        (fx.weight - fx.size) / 3
+    );
+    // Input weights as in the library's breakdown test: P2WPKH 270, P2TR
+    // key-path with annex 234.
+    assert_eq!(mapped["inputs"][0]["baseline_weight"], 270);
+    let unmapped: serde_json::Value = serde_json::from_str(&stdout(&unmapped)).expect("valid JSON");
+    assert_eq!(unmapped["inputs"][0]["baseline_weight"], 234);
+    assert_eq!(unmapped["baseline"]["weight"], annex.weight);
 }
 
 #[test]
@@ -410,14 +442,15 @@ fn aggregate_command_prints_a_breakdown_by_spend_type_and_unmapped_reason() {
     // Input weights from the library's breakdown test: P2WPKH 270 each (template
     // 3903 each), P2TR key-path with annex 234. 540 / 774 = 69.8%,
     // 234 / 774 = 30.2%.
-    // Columns: inputs, % of inputs, baseline Input weight, % of it, migrated.
+    // Columns: inputs, % of inputs, baseline Input weight, % of it, migrated,
+    // Added weight, % of all Added weight. 2 x (3903 - 270) = 7266 added.
     assert_eq!(
         row_after(&text, "P2WPKH"),
-        ["2", "66.7%", "540", "69.8%", "7806"]
+        ["2", "66.7%", "540", "69.8%", "7806", "7266", "100.0%"]
     );
     assert_eq!(
         row_after(&text, "P2TR key-path with annex"),
-        ["1", "33.3%", "234", "30.2%", "-"]
+        ["1", "33.3%", "234", "30.2%", "-", "-", "-"]
     );
     // The partially mapped transaction's Oracle weight, 400 of 436 + 400 + 436
     // = 1272 baseline weight, is 31.4%.
@@ -425,6 +458,56 @@ fn aggregate_command_prints_a_breakdown_by_spend_type_and_unmapped_reason() {
         text.contains("partially mapped baseline weight: 400 (31.4% of baseline)"),
         "{text}"
     );
+}
+
+#[test]
+fn aggregate_command_sorts_mapped_breakdown_rows_by_added_weight() {
+    let p2wpkh = p2wpkh_fixture();
+    let key_path = fixture("p2tr-keypath");
+    let key_path_annex = fixture("p2tr-keypath-annex");
+    let path = scratch_file("breakdown-added");
+    std::fs::write(
+        &path,
+        format!(
+            "{}
+{}
+{}
+",
+            p2wpkh.hex, key_path.hex, key_path_annex.hex
+        ),
+    )
+    .unwrap();
+
+    let output = run(
+        &["aggregate", "--scheme", "ml-dsa-44", path.to_str().unwrap()],
+        None,
+    );
+    std::fs::remove_file(&path).ok();
+
+    assert!(output.status.success(), "{}", stderr(&output));
+    let text = stdout(&output);
+    // Input weights: P2WPKH 270 -> 3903 (3633 added), P2TR key-path 41 x 4 +
+    // witness 1 + (1 + 64) = 230 -> 3903 (3673 added), P2TR key-path with annex
+    // Unmapped at 234. 734 baseline Input weight, 7306 Added weight in all.
+    // P2WPKH is larger today but P2TR key-path adds more, so it comes first.
+    assert_eq!(
+        row_after(&text, "P2TR key-path"),
+        ["1", "33.3%", "230", "31.3%", "3903", "3673", "50.3%"]
+    );
+    assert_eq!(
+        row_after(&text, "P2WPKH"),
+        ["1", "33.3%", "270", "36.8%", "3903", "3633", "49.7%"]
+    );
+    assert_eq!(
+        row_after(&text, "P2TR key-path with annex"),
+        ["1", "33.3%", "234", "31.9%", "-", "-", "-"]
+    );
+    let position = |label: &str| {
+        text.lines()
+            .position(|line| line.trim_start().starts_with(label))
+            .unwrap()
+    };
+    assert!(position("P2TR key-path") < position("P2WPKH"), "{text}");
 }
 
 #[test]
@@ -522,13 +605,20 @@ fn migrate_json_lines_prints_one_migrate_json_object_per_line_of_a_file() {
     let text = stdout(&output);
     let lines: Vec<&str> = text.lines().collect();
     assert_eq!(lines.len(), 2, "{text}");
-    // Each line is exactly what `migrate --json` prints for that transaction.
-    for (line, fx) in lines.iter().zip([&wpkh, &multisig]) {
+    // Each line is what `migrate --json` prints for that transaction, with its
+    // 1-indexed line number as the first field.
+    for (number, (line, fx)) in lines.iter().zip([&wpkh, &multisig]).enumerate() {
         let single = run(
             &["migrate", "--scheme", "ml-dsa-44", "--json", &fx.hex],
             None,
         );
-        assert_eq!(*line, stdout(&single).trim_end());
+        let single = stdout(&single);
+        let expected = format!(
+            r#"{{"line":{},{}"#,
+            number + 1,
+            single.trim_end().strip_prefix('{').unwrap()
+        );
+        assert_eq!(*line, expected);
     }
     let first: serde_json::Value = serde_json::from_str(lines[0]).expect("valid JSON");
     assert_eq!(first["migrated"]["weight"], 4069);
@@ -551,6 +641,7 @@ fn migrate_json_lines_reads_stdin_skips_blank_lines_and_reports_a_bad_line_in_pl
         .collect();
     assert_eq!(lines.len(), 3, "{text}");
     assert_eq!(lines[0]["migrated"]["weight"], 4069);
+    assert_eq!(lines[0]["line"], 1);
     // Line numbers count the blank line, as `aggregate`'s do.
     assert_eq!(lines[1]["line"], 3);
     assert!(
@@ -560,6 +651,7 @@ fn migrate_json_lines_reads_stdin_skips_blank_lines_and_reports_a_bad_line_in_pl
         "{text}"
     );
     assert_eq!(lines[2]["migrated"]["weight"], 4069);
+    assert_eq!(lines[2]["line"], 4);
 }
 
 #[test]
@@ -601,4 +693,195 @@ fn migrate_json_lines_with_a_path_and_a_hex_argument_is_a_usage_error() {
 
     assert!(!output.status.success());
     assert!(stderr(&output).contains("usage"), "{}", stderr(&output));
+}
+
+fn aggregate_json(args: &[&str], lines: &str) -> serde_json::Value {
+    let mut all = vec!["aggregate", "--scheme", "ml-dsa-44", "--json"];
+    all.extend_from_slice(args);
+    let output = run(&all, Some(lines));
+    assert!(output.status.success(), "{}", stderr(&output));
+    serde_json::from_str(&stdout(&output)).expect("valid JSON")
+}
+
+#[test]
+fn aggregate_command_json_reports_totals_breakdown_key_exposure_and_errors() {
+    let p2wpkh = p2wpkh_fixture();
+    let key_path = fixture("p2tr-keypath");
+    let key_path_annex = fixture("p2tr-keypath-annex");
+
+    let mut json = aggregate_json(
+        &["--fee-rate", "1.5"],
+        &format!(
+            "{}\n{}\n\nzz\n{}\n",
+            p2wpkh.hex, key_path.hex, key_path_annex.hex
+        ),
+    );
+
+    // Oracle weight/vsize: p2wpkh 436/109, p2tr-keypath 396/99,
+    // p2tr-keypath-annex 400/100 (partially mapped). Migrated: 4069/1018 for
+    // each of the first two (see migrate_command_prints_the_migrated_total_and_assumptions).
+    // Fees at 1.5 sat/vB, rounded up per transaction: 164 + 149 + 150 = 463
+    // today, 1527 + 1527 = 3054 migrated. Input weights as in
+    // aggregate_command_sorts_mapped_breakdown_rows_by_added_weight.
+    let errors = json
+        .as_object_mut()
+        .unwrap()
+        .remove("errors")
+        .expect("errors field");
+    assert_eq!(
+        json,
+        serde_json::json!({
+            "scheme": "ml-dsa-44",
+            "fee_rate": 1.5,
+            "counts": {"parsed": 3, "fully_mapped": 2, "partially_mapped": 1,
+                       "unmapped_inputs": 1, "parse_errors": 1},
+            "baseline": {"weight": 1232, "vsize": 308},
+            "migrated": {"weight": 8138, "vsize": 2036},
+            "partially_mapped": {"weight": 400, "vsize": 100},
+            "fee": {"baseline": 463, "migrated": 3054},
+            "breakdown": [
+                {"status": "mapped", "spend_type": "P2TR key-path",
+                 "key_exposure": "Exposed in output", "inputs": 1,
+                 "baseline_weight": 230, "migrated_weight": 3903, "added_weight": 3673},
+                {"status": "mapped", "spend_type": "P2WPKH",
+                 "key_exposure": "Hashed until spend", "inputs": 1,
+                 "baseline_weight": 270, "migrated_weight": 3903, "added_weight": 3633},
+                {"status": "unmapped", "reason": "P2TR key-path with annex",
+                 "key_exposure": "Exposed in output", "inputs": 1, "baseline_weight": 234},
+            ],
+            "key_exposure": [
+                {"key_exposure": "Exposed in output", "mapped_inputs": 1,
+                 "baseline_weight": 230, "migrated_weight": 3903, "added_weight": 3673,
+                 "unmapped_inputs": 1, "unmapped_baseline_weight": 234},
+                {"key_exposure": "Hashed until spend", "mapped_inputs": 1,
+                 "baseline_weight": 270, "migrated_weight": 3903, "added_weight": 3633,
+                 "unmapped_inputs": 0, "unmapped_baseline_weight": 0},
+                {"key_exposure": "No key", "mapped_inputs": 0,
+                 "baseline_weight": 0, "migrated_weight": 0, "added_weight": 0,
+                 "unmapped_inputs": 0, "unmapped_baseline_weight": 0},
+                {"key_exposure": "Undetermined", "mapped_inputs": 0,
+                 "baseline_weight": 0, "migrated_weight": 0, "added_weight": 0,
+                 "unmapped_inputs": 0, "unmapped_baseline_weight": 0},
+            ],
+        })
+    );
+    // Line numbers count the blank line.
+    assert_eq!(errors.as_array().map(Vec::len), Some(1), "{errors}");
+    assert_eq!(errors[0]["line"], 4);
+    assert!(
+        errors[0]["message"]
+            .as_str()
+            .is_some_and(|m| m.contains("hex")),
+        "{errors}"
+    );
+}
+
+#[test]
+fn aggregate_command_json_without_a_fee_rate_or_a_fully_mapped_transaction() {
+    let key_path_annex = fixture("p2tr-keypath-annex");
+
+    let json = aggregate_json(&[], &format!("{}\n", key_path_annex.hex));
+
+    assert_eq!(json["fee_rate"], serde_json::Value::Null);
+    assert!(json.get("fee").is_none(), "{json}");
+    assert_eq!(json["migrated"], serde_json::Value::Null);
+    assert_eq!(json["counts"]["fully_mapped"], 0);
+    assert_eq!(json["baseline"]["weight"], key_path_annex.weight);
+    assert_eq!(json["errors"], serde_json::json!([]));
+}
+
+#[test]
+fn aggregate_command_json_fee_is_null_when_nothing_is_fully_mapped() {
+    let key_path_annex = fixture("p2tr-keypath-annex");
+
+    let json = aggregate_json(&["--fee-rate", "2"], &format!("{}\n", key_path_annex.hex));
+
+    assert_eq!(json["fee_rate"], 2);
+    // Oracle vsize 100 at 2 sat/vB.
+    assert_eq!(
+        json["fee"],
+        serde_json::json!({"baseline": 200, "migrated": null})
+    );
+}
+
+/// Every Fixture's hex, one per line, in file-name order.
+fn all_fixture_lines() -> String {
+    let dir = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../pqweight/tests/fixtures");
+    let mut paths: Vec<PathBuf> = std::fs::read_dir(dir)
+        .unwrap()
+        .map(|entry| entry.unwrap().path())
+        .filter(|path| path.extension().is_some_and(|ext| ext == "hex"))
+        .collect();
+    paths.sort();
+    paths
+        .iter()
+        .map(|path| std::fs::read_to_string(path).unwrap().trim().to_string() + "\n")
+        .collect()
+}
+
+#[test]
+fn aggregate_json_breakdown_is_migrate_json_lines_inputs_grouped_by_kind() {
+    use std::collections::BTreeMap;
+
+    let lines = all_fixture_lines();
+    for scheme in ["ml-dsa-44", "falcon-512", "slh-dsa-128s"] {
+        let per_tx = run(
+            &["migrate", "--scheme", scheme, "--json-lines"],
+            Some(&lines),
+        );
+        let aggregate = run(&["aggregate", "--scheme", scheme, "--json"], Some(&lines));
+        assert!(per_tx.status.success(), "{}", stderr(&per_tx));
+        assert!(aggregate.status.success(), "{}", stderr(&aggregate));
+
+        // Regroup every input by the fields that name its row, summing the rest
+        // the way the breakdown documents it.
+        let mut grouped: BTreeMap<String, serde_json::Value> = BTreeMap::new();
+        for line in stdout(&per_tx).lines() {
+            let tx: serde_json::Value = serde_json::from_str(line).unwrap();
+            for input in tx["inputs"].as_array().unwrap() {
+                let mut key = input.clone();
+                let key_fields = key.as_object_mut().unwrap();
+                let baseline = key_fields
+                    .remove("baseline_weight")
+                    .unwrap()
+                    .as_i64()
+                    .unwrap();
+                let template = key_fields
+                    .remove("template_weight")
+                    .map(|w| w.as_i64().unwrap());
+                let row = grouped.entry(key.to_string()).or_insert_with(|| {
+                    let mut row = key.clone();
+                    let fields = row.as_object_mut().unwrap();
+                    fields.insert("inputs".into(), 0.into());
+                    fields.insert("baseline_weight".into(), 0.into());
+                    if template.is_some() {
+                        fields.insert("migrated_weight".into(), 0.into());
+                        fields.insert("added_weight".into(), 0.into());
+                    }
+                    row
+                });
+                let add = |row: &mut serde_json::Value, field: &str, by: i64| {
+                    row[field] = (row[field].as_i64().unwrap() + by).into();
+                };
+                add(row, "inputs", 1);
+                add(row, "baseline_weight", baseline);
+                if let Some(template) = template {
+                    add(row, "migrated_weight", template);
+                    add(row, "added_weight", template - baseline);
+                }
+            }
+        }
+
+        let aggregate: serde_json::Value = serde_json::from_str(&stdout(&aggregate)).unwrap();
+        let mut from_aggregate: Vec<serde_json::Value> =
+            aggregate["breakdown"].as_array().unwrap().clone();
+        let mut from_migrate: Vec<serde_json::Value> = grouped.into_values().collect();
+        from_aggregate.sort_by_key(ToString::to_string);
+        from_migrate.sort_by_key(ToString::to_string);
+        assert!(
+            from_migrate.len() > 5,
+            "{scheme}: too few kinds to be a real check"
+        );
+        assert_eq!(from_aggregate, from_migrate, "{scheme}");
+    }
 }

@@ -67,6 +67,16 @@ pub struct BreakdownRow {
     pub migrated_weight: Option<u64>,
 }
 
+impl BreakdownRow {
+    /// The block space migrating this row's inputs would add, as in
+    /// [`ExposureRow::added_weight`]. `None` for Unmapped rows, which have none.
+    #[must_use]
+    pub fn added_weight(&self) -> Option<i64> {
+        self.migrated_weight
+            .map(|migrated| migrated.cast_signed() - self.baseline_weight.cast_signed())
+    }
+}
+
 /// Every input with one **Key exposure** across the batch: Mapped inputs summed
 /// for their **Added weight**, Unmapped ones counted apart since they have none.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

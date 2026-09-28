@@ -1,4 +1,4 @@
-Status: ready-for-agent
+Status: done
 
 # `aggregate` output: `--json`, Added weight by spend type, per-transaction detail via `migrate`
 
@@ -71,3 +71,9 @@ Merges the former tickets 10 (`--json`), 12 (`--verbose`) and 13 (per-spend-type
 ## Source
 
 Ticket 01 (Out of Scope), ticket 02 (Out of Scope, and "`aggregate` is unchanged"), ticket 03 (the dropped `breakdown` array), ticket 07 decision 1, ticket 21 decision 7 (`--json-lines`).
+
+## Done (2026-09-28)
+
+- Report order (Mapped by Added weight, then Unmapped by baseline Input weight) lives in the CLI (`sorted_breakdown`), shared by the human table and `--json`. `AggregateResult.breakdown` stays in first-appearance order.
+- `FeeRate` gained `Display` (plain decimal, digits as given, e.g. `1.50`, `.5` -> `0.5`) so `fee_rate` echoes as a valid JSON number.
+- `docs/coverage/*.md` still show the old breakdown table (no Added weight columns); they're dated snapshots, left as recorded.

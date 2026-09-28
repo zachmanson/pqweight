@@ -4,8 +4,8 @@ use std::process::ExitCode;
 
 use pqweight::{
     AggregateResult, BaselineSpendType, BreakdownKind, BreakdownRow, ExposureRow, FeeRate,
-    InputResult, KeyExposure, Migration, MultisigThreshold, ParameterSet, UnmappedReason,
-    aggregate, fee,
+    InputResult, KeyExposure, Migration, MultisigThreshold, ParameterSet, TransactionWeight,
+    UnmappedReason, aggregate, fee,
 };
 
 fn main() -> ExitCode {
@@ -31,7 +31,7 @@ fn run(args: &[String]) -> Result<String, String> {
     }
 }
 
-const USAGE: &str = "usage: pqweight weight [--json] [<hex>]\n       pqweight migrate --scheme <scheme> [--fee-rate <rate>] [--json] [<hex>]\n       pqweight migrate --scheme <scheme> [--fee-rate <rate>] --json-lines [<path>]\n       pqweight aggregate --scheme <scheme> [--fee-rate <rate>] [<path>]";
+const USAGE: &str = "usage: pqweight weight [--json] [<hex>]\n       pqweight migrate --scheme <scheme> [--fee-rate <rate>] [--json] [<hex>]\n       pqweight migrate --scheme <scheme> [--fee-rate <rate>] --json-lines [<path>]\n       pqweight aggregate --scheme <scheme> [--fee-rate <rate>] [--json] [<path>]";
 
 fn run_weight(args: &[String]) -> Result<String, String> {
     let json = args.iter().any(|arg| arg == "--json");
@@ -44,10 +44,7 @@ fn run_weight(args: &[String]) -> Result<String, String> {
     let bytes = decode_hex(hex.trim())?;
     let result = pqweight::transaction_weight(&bytes).map_err(|err| err.to_string())?;
     if json {
-        Ok(format!(
-            r#"{{"weight":{},"vsize":{},"stripped_size":{},"total_size":{}}}"#,
-            result.weight, result.vsize, result.stripped_size, result.total_size
-        ))
+        Ok(weight_json(&result))
     } else {
         Ok(format!(
             "weight: {}\nvsize: {}\nstripped size: {}\ntotal size: {}",
@@ -107,12 +104,18 @@ fn run_migrate(args: &[String]) -> Result<String, String> {
         [] => read_stdin()?,
         _ => return Err(USAGE.to_string()),
     };
-    migrate_one(&hex, parameter_set, fee_rate, json)
+    let (baseline, migration) = migrate_one(&hex, parameter_set)?;
+    if json {
+        Ok(migrate_json(None, &baseline, &migration, fee_rate))
+    } else {
+        Ok(migrate_human(&migration, baseline.vsize, fee_rate))
+    }
 }
 
-/// `migrate --json` over every non-blank line of `text`, one output line each.
-/// A line that fails prints `{"line":N,"error":"..."}` (N 1-indexed, counting
-/// blank lines) and the batch continues, as in `aggregate`.
+/// `migrate --json` over every non-blank line of `text`, one output line each,
+/// with `"line":N` (N 1-indexed, counting blank lines) as its first field. A
+/// line that fails prints `{"line":N,"error":"..."}` and the batch continues,
+/// as in `aggregate`.
 fn migrate_json_lines(
     text: &str,
     parameter_set: ParameterSet,
@@ -121,44 +124,166 @@ fn migrate_json_lines(
     text.lines()
         .enumerate()
         .filter(|(_, line)| !line.trim().is_empty())
-        .map(|(index, line)| {
-            migrate_one(line, parameter_set, fee_rate, true).unwrap_or_else(|message| {
-                format!(
-                    r#"{{"line":{},"error":{}}}"#,
-                    index + 1,
-                    json_string(&message)
-                )
-            })
+        .map(|(index, line)| match migrate_one(line, parameter_set) {
+            Ok((baseline, migration)) => {
+                migrate_json(Some(index + 1), &baseline, &migration, fee_rate)
+            }
+            Err(message) => format!(
+                r#"{{"line":{},"error":{}}}"#,
+                index + 1,
+                json_string(&message)
+            ),
         })
         .collect::<Vec<_>>()
         .join("\n")
 }
 
-/// One transaction's `migrate` output, human or JSON.
+/// One transaction's weight today and its migration.
 fn migrate_one(
     hex: &str,
     parameter_set: ParameterSet,
-    fee_rate: Option<FeeRate>,
-    json: bool,
-) -> Result<String, String> {
+) -> Result<(TransactionWeight, Migration), String> {
     let bytes = decode_hex(hex.trim())?;
     let baseline = pqweight::transaction_weight(&bytes).map_err(|err| err.to_string())?;
     let migration = pqweight::migrate(&bytes, parameter_set).map_err(|err| err.to_string())?;
-
-    if json {
-        Ok(migrate_json(&migration, baseline.vsize, fee_rate))
-    } else {
-        Ok(migrate_human(&migration, baseline.vsize, fee_rate))
-    }
+    Ok((baseline, migration))
 }
 
 fn run_aggregate(args: &[String]) -> Result<String, String> {
-    let (parameter_set, fee_rate, positional) = parse_scheme_and_fee_rate_args(args)?;
+    let json = args.iter().any(|arg| arg == "--json");
+    let args: Vec<String> = args
+        .iter()
+        .filter(|arg| *arg != "--json")
+        .cloned()
+        .collect();
+    let (parameter_set, fee_rate, positional) = parse_scheme_and_fee_rate_args(&args)?;
 
     let text = read_path_or_stdin(&positional)?;
 
     let result = aggregate(text.lines().map(str::to_string), parameter_set, fee_rate);
-    Ok(aggregate_human(&result))
+    if json {
+        Ok(aggregate_json(&result, parameter_set, fee_rate))
+    } else {
+        Ok(aggregate_human(&result))
+    }
+}
+
+/// `aggregate --json`: the same numbers as the human output, with the scheme and
+/// fee rate echoed so a saved file says what produced it.
+fn aggregate_json(
+    result: &AggregateResult,
+    parameter_set: ParameterSet,
+    fee_rate: Option<FeeRate>,
+) -> String {
+    let totals = |weight: u64, vsize: u64| format!(r#"{{"weight":{weight},"vsize":{vsize}}}"#);
+    let counts = &result.counts;
+    let migrated = result.migrated.map_or_else(
+        || "null".to_string(),
+        |total| totals(total.weight, total.vsize),
+    );
+    let fee_field = result.fees.map_or_else(String::new, |fees| {
+        let migrated = fees
+            .migrated
+            .map_or_else(|| "null".to_string(), |fee| fee.to_string());
+        format!(
+            r#","fee":{{"baseline":{},"migrated":{migrated}}}"#,
+            fees.baseline
+        )
+    });
+    let breakdown: Vec<String> = sorted_breakdown(&result.breakdown)
+        .into_iter()
+        .map(breakdown_row_json)
+        .collect();
+    let exposure: Vec<String> = result
+        .exposure
+        .iter()
+        .map(|row| {
+            format!(
+                r#"{{"key_exposure":"{}","mapped_inputs":{},"baseline_weight":{},"migrated_weight":{},"added_weight":{},"unmapped_inputs":{},"unmapped_baseline_weight":{}}}"#,
+                key_exposure_name(row.key_exposure),
+                row.mapped_inputs,
+                row.baseline_weight,
+                row.migrated_weight,
+                row.added_weight(),
+                row.unmapped_inputs,
+                row.unmapped_baseline_weight,
+            )
+        })
+        .collect();
+    let errors: Vec<String> = result
+        .errors
+        .iter()
+        .map(|error| {
+            format!(
+                r#"{{"line":{},"message":{}}}"#,
+                error.line,
+                json_string(&error.message)
+            )
+        })
+        .collect();
+    format!(
+        r#"{{"scheme":"{}","fee_rate":{},"counts":{{"parsed":{},"fully_mapped":{},"partially_mapped":{},"unmapped_inputs":{},"parse_errors":{}}},"baseline":{},"migrated":{migrated},"partially_mapped":{}{fee_field},"breakdown":[{}],"key_exposure":[{}],"errors":[{}]}}"#,
+        scheme_name(parameter_set),
+        fee_rate.map_or_else(|| "null".to_string(), |rate| rate.to_string()),
+        counts.parsed,
+        counts.fully_mapped,
+        counts.partially_mapped,
+        counts.unmapped_inputs,
+        counts.parse_errors,
+        totals(result.baseline.weight, result.baseline.vsize),
+        totals(
+            result.partially_mapped.weight,
+            result.partially_mapped.vsize
+        ),
+        breakdown.join(","),
+        exposure.join(","),
+        errors.join(","),
+    )
+}
+
+/// One breakdown row as JSON, named the way `migrate --json` names its inputs.
+fn breakdown_row_json(row: &BreakdownRow) -> String {
+    match row.kind {
+        BreakdownKind::Mapped(spend_type) => format!(
+            r#"{{"status":"mapped","spend_type":"{}"{},"key_exposure":"{}","inputs":{},"baseline_weight":{},"migrated_weight":{},"added_weight":{}}}"#,
+            spend_type_name(spend_type),
+            threshold_field(spend_type),
+            key_exposure_name(spend_type.key_exposure()),
+            row.inputs,
+            row.baseline_weight,
+            row.migrated_weight
+                .expect("a Mapped row has a migrated weight"),
+            row.added_weight()
+                .expect("a Mapped row has an Added weight"),
+        ),
+        BreakdownKind::Unmapped(reason) => format!(
+            r#"{{"status":"unmapped","reason":"{}","key_exposure":"{}","inputs":{},"baseline_weight":{}}}"#,
+            unmapped_reason_name(reason),
+            key_exposure_name(reason.key_exposure()),
+            row.inputs,
+            row.baseline_weight,
+        ),
+    }
+}
+
+/// `,"threshold":{"m":M,"n":N}` for a multisig spend type, nothing otherwise.
+fn threshold_field(spend_type: BaselineSpendType) -> String {
+    match spend_type.threshold() {
+        Some(MultisigThreshold { m, n }) => format!(r#","threshold":{{"m":{m},"n":{n}}}"#),
+        None => String::new(),
+    }
+}
+
+/// The breakdown in report order: Mapped rows by Added weight, then Unmapped
+/// rows (which have none) by baseline Input weight, largest first in both.
+fn sorted_breakdown(breakdown: &[BreakdownRow]) -> Vec<&BreakdownRow> {
+    let (mut mapped, mut unmapped): (Vec<&BreakdownRow>, Vec<&BreakdownRow>) = breakdown
+        .iter()
+        .partition(|row| matches!(row.kind, BreakdownKind::Mapped(_)));
+    mapped.sort_by_key(|row| std::cmp::Reverse(row.added_weight()));
+    unmapped.sort_by_key(|row| std::cmp::Reverse(row.baseline_weight));
+    mapped.extend(unmapped);
+    mapped
 }
 
 fn aggregate_human(result: &AggregateResult) -> String {
@@ -205,11 +330,15 @@ fn aggregate_human(result: &AggregateResult) -> String {
     lines.join("\n")
 }
 
-/// The breakdown as two sections, Mapped rows then Unmapped rows, each sorted
-/// by baseline Input weight, largest first.
+/// The breakdown as two sections, Mapped rows then Unmapped rows, in
+/// [`sorted_breakdown`]'s order.
 fn breakdown_table(breakdown: &[BreakdownRow]) -> Vec<String> {
     let total_inputs: usize = breakdown.iter().map(|row| row.inputs).sum();
     let total_weight: u64 = breakdown.iter().map(|row| row.baseline_weight).sum();
+    let total_added: i64 = breakdown
+        .iter()
+        .filter_map(BreakdownRow::added_weight)
+        .sum();
     let label = |row: &BreakdownRow| match row.kind {
         BreakdownKind::Mapped(spend_type) => spend_type_label(spend_type),
         BreakdownKind::Unmapped(reason) => unmapped_reason_name(reason).to_string(),
@@ -221,31 +350,39 @@ fn breakdown_table(breakdown: &[BreakdownRow]) -> Vec<String> {
         .unwrap_or(0);
 
     let mut lines = vec![
-        "breakdown (inputs, % of inputs, baseline input weight, % of it, migrated input weight):"
+        "breakdown (inputs, % of inputs, baseline input weight, % of it, migrated input weight, added input weight, % of it):"
             .to_string(),
     ];
     for (heading, mapped) in [("mapped:", true), ("unmapped:", false)] {
         lines.push(heading.to_string());
-        let mut rows: Vec<&BreakdownRow> = breakdown
-            .iter()
+        let rows: Vec<&BreakdownRow> = sorted_breakdown(breakdown)
+            .into_iter()
             .filter(|row| matches!(row.kind, BreakdownKind::Mapped(_)) == mapped)
             .collect();
-        rows.sort_by_key(|row| std::cmp::Reverse(row.baseline_weight));
         if rows.is_empty() {
             lines.push("  (none)".to_string());
         }
         for row in rows {
+            let dash = || "-".to_string();
             let migrated = row
                 .migrated_weight
-                .map_or_else(|| "-".to_string(), |weight| weight.to_string());
+                .map_or_else(dash, |weight| weight.to_string());
+            let added = row
+                .added_weight()
+                .map_or_else(dash, |weight| weight.to_string());
+            let added_percent = row
+                .added_weight()
+                .map_or_else(dash, |weight| signed_percent(weight, total_added));
             lines.push(format!(
-                "  {:<width$}  {:>8}  {:>6}  {:>12}  {:>6}  {:>12}",
+                "  {:<width$}  {:>8}  {:>6}  {:>12}  {:>6}  {:>12}  {:>12}  {:>6}",
                 label(row),
                 row.inputs,
                 percent(row.inputs as u64, total_inputs as u64),
                 row.baseline_weight,
                 percent(row.baseline_weight, total_weight),
                 migrated,
+                added,
+                added_percent,
             ));
         }
     }
@@ -339,6 +476,14 @@ fn parse_scheme(scheme: &str) -> Result<ParameterSet, String> {
     }
 }
 
+fn scheme_name(parameter_set: ParameterSet) -> &'static str {
+    match parameter_set {
+        ParameterSet::MlDsa44 => "ml-dsa-44",
+        ParameterSet::Falcon512 => "falcon-512",
+        ParameterSet::SlhDsa128s => "slh-dsa-128s",
+    }
+}
+
 fn spend_type_name(spend_type: BaselineSpendType) -> &'static str {
     match spend_type {
         BaselineSpendType::P2wpkh => "P2WPKH",
@@ -424,43 +569,45 @@ fn migrate_human(migration: &Migration, baseline_vsize: u64, fee_rate: Option<Fe
     lines.join("\n")
 }
 
-fn migrate_json(migration: &Migration, baseline_vsize: u64, fee_rate: Option<FeeRate>) -> String {
+/// `migrate --json` for one transaction. `line`, when given, is its line number
+/// in a `--json-lines` batch, printed as the first field.
+fn migrate_json(
+    line: Option<usize>,
+    baseline: &TransactionWeight,
+    migration: &Migration,
+    fee_rate: Option<FeeRate>,
+) -> String {
     let inputs: Vec<String> = migration
         .inputs
         .iter()
         .map(|input| match input {
             InputResult::Mapped {
                 spend_type,
+                baseline_weight,
                 template_weight,
-                ..
             } => {
-                let threshold = match spend_type.threshold() {
-                    Some(MultisigThreshold { m, n }) => {
-                        format!(r#","threshold":{{"m":{m},"n":{n}}}"#)
-                    }
-                    None => String::new(),
-                };
                 format!(
-                    r#"{{"status":"mapped","spend_type":"{}"{threshold},"template_weight":{template_weight},"key_exposure":"{}"}}"#,
+                    r#"{{"status":"mapped","spend_type":"{}"{},"baseline_weight":{baseline_weight},"template_weight":{template_weight},"key_exposure":"{}"}}"#,
                     spend_type_name(*spend_type),
+                    threshold_field(*spend_type),
                     key_exposure_name(spend_type.key_exposure())
                 )
             }
-            InputResult::Unmapped { reason, .. } => format!(
-                r#"{{"status":"unmapped","reason":"{}","key_exposure":"{}"}}"#,
+            InputResult::Unmapped {
+                reason,
+                baseline_weight,
+            } => format!(
+                r#"{{"status":"unmapped","reason":"{}","baseline_weight":{baseline_weight},"key_exposure":"{}"}}"#,
                 unmapped_reason_name(*reason),
                 key_exposure_name(reason.key_exposure())
             ),
         })
         .collect();
 
-    let migrated = match &migration.migrated {
-        Some(total) => format!(
-            r#"{{"weight":{},"vsize":{},"stripped_size":{},"total_size":{}}}"#,
-            total.weight, total.vsize, total.stripped_size, total.total_size
-        ),
-        None => "null".to_string(),
-    };
+    let migrated = migration
+        .migrated
+        .as_ref()
+        .map_or_else(|| "null".to_string(), weight_json);
 
     let exceeds_relay_limit = match migration.exceeds_relay_limit {
         Some(true) => "true",
@@ -476,7 +623,7 @@ fn migrate_json(migration: &Migration, baseline_vsize: u64, fee_rate: Option<Fee
 
     let fee_field = match (fee_rate, &migration.migrated) {
         (Some(rate), Some(total)) => {
-            let baseline_fee = fee(baseline_vsize, rate);
+            let baseline_fee = fee(baseline.vsize, rate);
             let pq_fee = fee(total.vsize, rate);
             format!(
                 r#","fee":{{"baseline":{baseline_fee},"pq":{pq_fee},"difference":{}}}"#,
@@ -486,10 +633,20 @@ fn migrate_json(migration: &Migration, baseline_vsize: u64, fee_rate: Option<Fee
         _ => String::new(),
     };
 
+    let line_field = line.map_or_else(String::new, |line| format!(r#""line":{line},"#));
     format!(
-        r#"{{"inputs":[{}],"migrated":{migrated},"exceeds_relay_limit":{exceeds_relay_limit},"assumptions":[{}]{fee_field}}}"#,
+        r#"{{{line_field}"inputs":[{}],"baseline":{},"migrated":{migrated},"exceeds_relay_limit":{exceeds_relay_limit},"assumptions":[{}]{fee_field}}}"#,
         inputs.join(","),
+        weight_json(baseline),
         assumptions.join(","),
+    )
+}
+
+/// A transaction's weight as the JSON object `weight --json` prints.
+fn weight_json(weight: &TransactionWeight) -> String {
+    format!(
+        r#"{{"weight":{},"vsize":{},"stripped_size":{},"total_size":{}}}"#,
+        weight.weight, weight.vsize, weight.stripped_size, weight.total_size
     )
 }
 

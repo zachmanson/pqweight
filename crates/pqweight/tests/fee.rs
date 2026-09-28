@@ -56,3 +56,16 @@ fn a_zero_rate_produces_a_zero_fee() {
 
     assert_eq!(fee(1000, rate), 0);
 }
+
+#[test]
+fn a_fee_rate_displays_as_a_plain_decimal_keeping_its_given_digits() {
+    let shown = |input: &str| FeeRate::parse(input).expect("valid rate").to_string();
+
+    assert_eq!(shown("20"), "20");
+    assert_eq!(shown("1.5"), "1.5");
+    assert_eq!(shown("1.50"), "1.50");
+    assert_eq!(shown("0.05"), "0.05");
+    // Forms `parse` accepts but a JSON number doesn't.
+    assert_eq!(shown(".5"), "0.5");
+    assert_eq!(shown("+007"), "7");
+}

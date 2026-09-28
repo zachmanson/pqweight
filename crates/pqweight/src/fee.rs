@@ -47,6 +47,21 @@ impl FeeRate {
     }
 }
 
+/// The rate as a plain decimal with as many fractional digits as it was given,
+/// such as `1.50` or `20`: always a valid JSON number.
+impl std::fmt::Display for FeeRate {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        let whole = self.numerator / self.denominator;
+        if self.denominator == 1 {
+            return write!(f, "{whole}");
+        }
+        // The denominator is 10^digits, so its own length minus one is `digits`.
+        let digits = self.denominator.to_string().len() - 1;
+        let frac = self.numerator % self.denominator;
+        write!(f, "{whole}.{frac:0digits$}")
+    }
+}
+
 /// Parses an unsigned plain decimal (`"20"`, `"1.5"`, `"0.25"`) into
 /// `(numerator, denominator)`, e.g. `"1.5"` into `(15, 10)`. Returns `None` for
 /// anything else: empty input, a sign, scientific notation, more than one point.

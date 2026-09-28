@@ -271,3 +271,54 @@ fn exposure_has_one_row_per_key_exposure_summing_its_inputs_and_counting_unmappe
         .collect();
     assert_eq!(added, vec![3903 - 230, 3903 - 270, 0, 0]);
 }
+
+#[test]
+fn a_mapped_breakdown_row_has_added_weight_and_an_unmapped_one_has_none() {
+    // Same batch and Input weights as the exposure test above: P2TR key-path 230
+    // -> 3903, p2tr-keypath-annex Unmapped at 234, P2WPKH 270 -> 3903, legacy
+    // anchor 164 -> 164.
+    let lines = vec![
+        to_hex(&segwit_tx(&[], &[&[0u8; 64]])),
+        fixture_hex("p2tr-keypath-annex"),
+        fixture_hex("p2wpkh"),
+        to_hex(&legacy_anchor_tx()),
+    ];
+
+    let result = aggregate(lines.into_iter(), ParameterSet::MlDsa44, None);
+
+    let added: Vec<(BreakdownKind, Option<i64>)> = result
+        .breakdown
+        .iter()
+        .map(|row| (row.kind, row.added_weight()))
+        .collect();
+    assert_eq!(
+        added,
+        vec![
+            (
+                BreakdownKind::Mapped(BaselineSpendType::P2trKeyPath),
+                Some(3903 - 230)
+            ),
+            (
+                BreakdownKind::Unmapped(UnmappedReason::P2trKeyPathAnnex),
+                None
+            ),
+            (
+                BreakdownKind::Mapped(BaselineSpendType::P2wpkh),
+                Some(3903 - 270)
+            ),
+            (
+                BreakdownKind::Mapped(BaselineSpendType::PayToAnchor),
+                Some(0)
+            ),
+        ]
+    );
+    // The mapped rows' Added weight is the same block space as the Key exposure
+    // rows', just grouped differently.
+    let by_spend_type: i64 = result
+        .breakdown
+        .iter()
+        .filter_map(BreakdownRow::added_weight)
+        .sum();
+    let by_exposure: i64 = result.exposure.iter().map(ExposureRow::added_weight).sum();
+    assert_eq!(by_spend_type, by_exposure);
+}
