@@ -155,6 +155,8 @@ pqweight move-cost crates/pqweight/tests/fixtures/snapshot/regtest-utxo.dat
 pqweight move-cost --json <snapshot> | jq '.total.above_dust'
 ```
 
+[docs/move-cost/935k-snapshot.md](docs/move-cost/935k-snapshot.md) runs it on the mainnet snapshot at height 935,000: moving every Exposed coin takes 3,444 to 6,507 full blocks, with the steps to download, verify and reproduce it.
+
 ## What's covered
 
 Mapped spend types: P2WPKH, P2SH-P2WPKH, P2PKH, P2TR key-path, P2TR script-path single-key leaves, P2WSH / P2SH-P2WSH / P2SH multisig (any m-of-n), P2WSH / P2SH-P2WSH contract scripts (hashlocks, timelocks, Lightning), pay-to-anchor, and coinbase.

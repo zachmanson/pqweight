@@ -1,4 +1,4 @@
-Status: ready-for-agent
+Status: done
 
 # Move cost on the 935k mainnet snapshot
 
@@ -20,3 +20,5 @@ Ticket 22 built `pqweight move-cost` and showed it correct on a regtest snapshot
 - Not checked against Core per coin on mainnet: the per-coin Oracle is regtest only. The mainnet check is `loadtxoutset`'s hash plus the coin count.
 
 ## Comments
+
+- 2026-09-30: Done. Report `docs/move-cost/935k-snapshot.md`. `loadtxoutset` on Core v31.1.0 accepted the file (164,241,311 coins, base `…0fb5ee`); header count, `loadtxoutset` count and `scanned.coins` all 164,241,311; scanned value 19,984,148.03 BTC vs 19,984,375 issued (gap = known unspendable). Total: 3,444 floor / 6,507 ceiling blocks; P2TR is 91% of the weight, P2PK 90% of the value in ~5 blocks. Snapshot kept at `C:\Users\zachm\pqweight-data\utxo-935000.dat` (outside the repo, SHA-256 `e572ddbe…d486`); throwaway datadir deleted. Scan takes ~40 s in release.
