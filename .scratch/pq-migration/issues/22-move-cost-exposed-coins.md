@@ -1,4 +1,4 @@
-Status: needs-triage
+Status: ready-for-agent
 
 # Move cost of Exposed coins
 
@@ -23,3 +23,21 @@ Every result so far is about spends: how much weight real transactions would gai
 Ticket 11 (wontfix 2026-09-28): the P2PK template was reframed as this question during grilling.
 
 ## Comments
+
+**2026-09-30, grilled: ready-for-agent.** New glossary terms Exposed coin and Move cost (`CONTEXT.md`); data source in ADR 0003. Decisions:
+
+1. **Result.** For each output type: coin count, BTC value, and Move cost floor and ceiling in WU and in full blocks (÷ 4,000,000 WU). "Blocks hold nothing but moves" is a stated assumption. Every row also has a second pair of numbers counting only coins of at least 546 sats (inscription postage and data outputs nobody will pay to move).
+2. **When.** Moves happen before any ECDSA/Schnorr-disabling fork: today's signatures, into a PQ output. Post-fork rescue spends are Out of Scope; reopen if a rescue proposal with a byte layout appears (same objection as ticket 15).
+3. **Which coins.** Exposed coins only: P2PK (compressed and uncompressed), bare multisig, P2TR. Reuse exposure (P2PKH, P2SH, P2WSH with an earlier revealed key or script) is left out; the report says the numbers are a lower bound.
+4. **Data source.** The 935k assumeutxo snapshot, verified once with `loadtxoutset` on a throwaway datadir (headers-only sync). No `hash_serialized_3` recompute, no secp256k1 dependency: uncompressed P2PK (compressed-script codes 4/5) is recognized by code alone. See ADR 0003.
+5. **Consolidation.** No guess at N. Floor = sum of spend weights (perfect consolidation). Ceiling = one coin per transaction (1 in, 1 out: spend weight + transaction overhead + one PQ output).
+6. **Spend layouts** (stated assumptions, written in `docs/migration-templates.md` so the Second calculation checks them): every input has a 36-byte outpoint and 4-byte sequence; P2PK scriptSig = one 72-byte DER signature push; bare multisig m-of-n = `OP_0` + m × 72-byte signature pushes, m read from the script; P2TR = key-path, one 64-byte Schnorr signature (a lower bound for script-path-only coins such as inscriptions, said in the report). PQ output = BIP-360 style 34-byte scriptPubKey, 43 bytes = 172 WU.
+7. **Code.** A streaming snapshot parser module (bytes to coins, never holds the file in memory) separate from a move-cost module (coins to floor/ceiling). CLI `pqweight move-cost <snapshot>`, text and `--json`.
+8. **Snapshot format facts** (Core v31 source): 51-byte header (magic `utxoÿ`, u16 version 2, network magic, base blockhash, u64 coin count); body grouped per txid (txid, CompactSize count, then per coin CompactSize vout + `Coin`); no terminator, stop after coin count. `Coin` = `VARINT(height*2+coinbase)`, `VARINT(CompressAmount(value))`, compressed script (`VARINT nSize`: 0 P2PKH, 1 P2SH, 2/3 compressed P2PK, 4/5 uncompressed P2PK x-only, >=6 raw script of nSize-6). Core VARINT is MSB-first base-128 with -1 per continuation byte, not LEB128. Sources: `node/utxo_snapshot.h`, `rpc/blockchain.cpp` `WriteUTXOSnapshot`, `coins.h`, `serialize.h`, `compressor.{h,cpp}`. Mirrors with direct HTTP links: bitcoin-snapshots.jaonoctus.dev.
+
+**Slices:**
+
+1. Snapshot parser + a regtest snapshot Fixture (P2PK compressed and uncompressed, bare multisig 1-of-1 to 3-of-3, P2TR, P2PKH, P2WPKH, P2WSH) recorded by a new script in the `record-fixtures.ps1` style; Oracle values are `gettxoutsetinfo` totals and per-coin `gettxout`. Unit tests for VARINT and amount decompression on Core's documented values.
+2. Move-cost arithmetic + move layouts in `docs/migration-templates.md` + Second calculation extended to them.
+3. `pqweight move-cost` CLI, text and `--json`.
+4. Download the 935k snapshot, verify with `loadtxoutset`, run it, write `docs/move-cost/935k-snapshot.md`.

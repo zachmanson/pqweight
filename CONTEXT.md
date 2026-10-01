@@ -55,6 +55,14 @@ Breaking a public key revealed at spend time and forging a competing spend befor
 Where an input's public key sat before this spend, as seen from the spending side: Exposed in output (the key is in the output itself, such as P2TR or P2PK, so open to a Long-exposure attack), Hashed until spend (only a hash was on-chain, so open to a Short-exposure attack unless the key was revealed earlier through address reuse, which the spending side can't show), No key (nothing to attack), or Undetermined. It names what was seen, never what an attacker could actually do.
 _Avoid_: Long-exposed, short-exposed, vulnerable
 
+**Exposed coin**:
+An unspent output whose public key sits in the output itself: P2PK, bare multisig or P2TR. It is the unspent-side counterpart of Key exposure's Exposed in output. Coins whose key was revealed earlier through address reuse are not Exposed coins, because the unspent output alone can't show it.
+_Avoid_: Vulnerable coin, at-risk UTXO
+
+**Move cost**:
+The weight of the transactions that would move a set of unspent coins to PQ outputs, spending them with today's signatures before any soft fork disables them. Reported as a floor (perfect consolidation: only the spends' own weight) and a ceiling (one coin per transaction). Unlike Added weight, it is about coins that haven't been spent, not spends that happened.
+_Avoid_: Rescue cost, migration cost
+
 **Signature scheme**:
 A post-quantum signing algorithm family, such as ML-DSA, SLH-DSA or Falcon.
 _Avoid_: Algorithm, cipher
