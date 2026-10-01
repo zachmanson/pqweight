@@ -16,13 +16,14 @@ Or run it without installing: `cargo run -p pqweight-cli -- <command> ...`
 
 ## Usage
 
-There are three commands. Each takes a raw transaction as hex, either as an argument or on stdin.
+There are four commands. The first three take raw transactions as hex, either as an argument or on stdin; `move-cost` reads a UTXO snapshot file.
 
 ```
 pqweight weight [--json] [<hex>]
 pqweight migrate --scheme <scheme> [--fee-rate <rate>] [--json] [<hex>]
 pqweight migrate --scheme <scheme> [--fee-rate <rate>] --json-lines [<path>]
 pqweight aggregate --scheme <scheme> [--fee-rate <rate>] [--json] [<path>]
+pqweight move-cost [--json] <snapshot>
 ```
 
 `<scheme>` is one of `ml-dsa-44`, `falcon-512`, `slh-dsa-128s`. `<rate>` is in sat/vB and can be a decimal like `1.5`.
@@ -145,6 +146,15 @@ pqweight aggregate --scheme ml-dsa-44 --json sample.txt | jq '.breakdown[] | sel
 
 [docs/coverage/2026-09-sample.md](docs/coverage/2026-09-sample.md) is a worked example over three mainnet blocks, with the block hashes to reproduce it.
 
+### Move cost of Exposed coins (a UTXO snapshot)
+
+`move-cost` reads a Bitcoin Core UTXO snapshot (the file `dumptxoutset` writes and `loadtxoutset` reads; see ADR 0003) one coin at a time, finds every **Exposed coin** (P2PK, bare multisig, P2TR: the key sits in the output itself) and reports how much weight it would take to move them into PQ outputs with today's signatures. Each row gives a floor (perfect consolidation) and a ceiling (one coin per transaction), in WU and in full blocks, once for all coins and once for coins of at least 546 sats. The layouts are in [docs/migration-templates.md](docs/migration-templates.md), "Move layouts".
+
+```sh
+pqweight move-cost crates/pqweight/tests/fixtures/snapshot/regtest-utxo.dat
+pqweight move-cost --json <snapshot> | jq '.total.above_dust'
+```
+
 ## What's covered
 
 Mapped spend types: P2WPKH, P2SH-P2WPKH, P2PKH, P2TR key-path, P2TR script-path single-key leaves, P2WSH / P2SH-P2WSH / P2SH multisig (any m-of-n), P2WSH / P2SH-P2WSH contract scripts (hashlocks, timelocks, Lightning), pay-to-anchor, and coinbase.
@@ -181,7 +191,7 @@ cargo fmt --all --check
 
 CI runs the same three on every push and PR.
 
-Weight tests run against **fixtures** in `crates/pqweight/tests/fixtures/`: signed transactions (mostly built on a throwaway regtest node, a few taken from mainnet) with the `weight` and `vsize` Bitcoin Core reported for them. Fixtures are committed, so CI never needs a node. To re-record them you need a local Bitcoin Core; see `scripts/record-fixtures.ps1`.
+Weight tests run against **fixtures** in `crates/pqweight/tests/fixtures/`: signed transactions (mostly built on a throwaway regtest node, a few taken from mainnet) with the `weight` and `vsize` Bitcoin Core reported for them. Fixtures are committed, so CI never needs a node. To re-record them you need a local Bitcoin Core; see `scripts/record-fixtures.ps1`. The snapshot Fixture (`tests/fixtures/snapshot/`, a regtest UTXO snapshot with `gettxout` for every coin) is recorded by `scripts/record-snapshot-fixture.ps1`.
 
 ## License
 

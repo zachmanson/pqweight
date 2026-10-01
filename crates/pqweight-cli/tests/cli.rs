@@ -885,3 +885,104 @@ fn aggregate_json_breakdown_is_migrate_json_lines_inputs_grouped_by_kind() {
         assert_eq!(from_aggregate, from_migrate, "{scheme}");
     }
 }
+
+fn snapshot_fixture_path() -> String {
+    PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+        .join("../pqweight/tests/fixtures/snapshot/regtest-utxo.dat")
+        .to_string_lossy()
+        .into_owned()
+}
+
+#[test]
+fn move_cost_json_reports_each_exposed_type_with_dust_cut_and_total() {
+    let output = run(&["move-cost", "--json", &snapshot_fixture_path()], None);
+
+    assert!(output.status.success(), "stderr: {}", stderr(&output));
+    let json: serde_json::Value = serde_json::from_str(&stdout(&output)).unwrap();
+    assert_eq!(json["scanned"]["coins"], 118);
+    assert_eq!(json["snapshot"]["coins"], 118);
+    assert_eq!(
+        json["snapshot"]["base_block_hash"].as_str().unwrap().len(),
+        64
+    );
+
+    let rows = json["rows"].as_array().unwrap();
+    let names: Vec<&str> = rows
+        .iter()
+        .map(|row| row["exposed_type"].as_str().unwrap())
+        .collect();
+    assert_eq!(
+        names,
+        [
+            "P2PK compressed",
+            "P2PK uncompressed",
+            "bare multisig",
+            "bare multisig",
+            "bare multisig",
+            "bare multisig",
+            "bare multisig",
+            "P2TR"
+        ]
+    );
+    assert_eq!(rows[2]["threshold"], serde_json::json!({"m": 1, "n": 1}));
+    assert!(rows[0].get("threshold").is_none());
+
+    let p2tr = &rows[7];
+    assert_eq!(p2tr["all"]["coins"], 3);
+    assert_eq!(p2tr["all"]["floor_weight"], 690);
+    assert_eq!(p2tr["all"]["ceiling_weight"], 1_332);
+    assert_eq!(p2tr["above_dust"]["coins"], 2);
+    assert_eq!(p2tr["above_dust"]["floor_blocks"], 460.0 / 4_000_000.0);
+
+    let floor_sum: u64 = rows
+        .iter()
+        .map(|row| row["all"]["floor_weight"].as_u64().unwrap())
+        .sum();
+    assert_eq!(json["total"]["all"]["floor_weight"], floor_sum);
+    assert!(!json["assumptions"].as_array().unwrap().is_empty());
+}
+
+#[test]
+fn move_cost_text_lists_rows_in_order_with_assumptions() {
+    let output = run(&["move-cost", &snapshot_fixture_path()], None);
+
+    assert!(output.status.success(), "stderr: {}", stderr(&output));
+    let text = stdout(&output);
+    assert!(text.contains("coins scanned: 118"), "{text}");
+    let position = |needle: &str| {
+        text.find(needle)
+            .unwrap_or_else(|| panic!("{needle:?} missing from:\n{text}"))
+    };
+    assert!(position("P2PK compressed") < position("P2PK uncompressed"));
+    assert!(position("P2PK uncompressed") < position("bare multisig 1-of-1"));
+    assert!(position("bare multisig 3-of-3") < position("P2TR"));
+    assert!(position("coins of at least 546 sats:") > position("P2TR"));
+    assert!(position("assumptions:") > position("coins of at least 546 sats:"));
+}
+
+#[test]
+fn move_cost_on_a_file_that_is_not_a_snapshot_fails_with_the_reason() {
+    let dir = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../pqweight/tests/fixtures");
+    let not_a_snapshot = dir.join("p2wpkh.hex");
+
+    let output = run(&["move-cost", &not_a_snapshot.to_string_lossy()], None);
+
+    assert!(!output.status.success());
+    assert!(
+        stderr(&output).contains("not a UTXO snapshot"),
+        "{}",
+        stderr(&output)
+    );
+}
+
+#[test]
+fn move_cost_without_a_path_prints_usage() {
+    let output = run(&["move-cost"], None);
+
+    assert!(!output.status.success());
+    assert!(
+        stderr(&output).contains("pqweight move-cost"),
+        "{}",
+        stderr(&output)
+    );
+}

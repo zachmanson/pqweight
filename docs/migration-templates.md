@@ -115,3 +115,45 @@ Two figures from the tickets, re-derived from the rules above.
 
 - **P2WSH multisig 2-of-3, ML-DSA-44** (Fixture `p2wsh-multisig`, empty scriptSig, so 41 non-witness bytes): `script'` = 1 + 3 × (3 + 1,312) + 1 + 1 = 3,948 bytes, a 3-byte prefix. Witness = 1 (count) + 1 (empty dummy, length 0) + 2 × (3 + 2,420) + (3 + 3,948) = 8,799. Template weight = 4 × 41 + 8,799 = 8,963.
 - **P2TR script-path single-key, ML-DSA-44** (Fixture `p2tr-scriptpath`, leaf `20<key>ac`, control block 33 bytes): leaf' = 3 + 1,312 + 1 = 1,316. Witness = 1 + (3 + 2,420) + (3 + 1,316) + (1 + 1) = 3,745.
+
+## Move layouts
+
+The transactions **Move cost** counts (ticket 22): an unspent **Exposed coin** spent with today's signature, before any soft fork disables it, into a PQ output. Unlike the templates above, nothing here is post-quantum except the output; these are stated assumptions in the same sense as ADR 0002.
+
+### Which coins
+
+Read from the coin's scriptPubKey as the UTXO snapshot stores it:
+
+- **P2PK compressed**: `21 <33-byte key> ac` (snapshot compressed-script codes 2 and 3).
+- **P2PK uncompressed**: `41 04 <64 bytes> ac` with a valid key (codes 4 and 5). A P2PK script whose key is not on the curve is stored raw by Core and is not counted: nobody can spend it, so nothing can move it or steal it. Hybrid-encoded keys (prefix `06` or `07`) are also stored raw and not counted; they are rare enough not to matter, and leaving them out keeps the result a lower bound.
+- **Bare multisig m-of-n**: exactly `OP_m <n keys> OP_n OP_CHECKMULTISIG`, 1 ≤ m ≤ n ≤ 20, every key a direct push of 33 or 65 bytes, as the P2SH multisig template reads its script. One row per threshold.
+- **P2TR**: exactly `51 20 <32 bytes>`.
+
+Every other coin is not an Exposed coin, including P2PKH, P2SH, P2WPKH and P2WSH whose key was revealed by address reuse (the snapshot can't show reuse, so Move cost is a lower bound).
+
+### Spends
+
+Every input has a 36-byte outpoint and a 4-byte sequence. A signature is a 72-byte DER signature including its sighash byte, or a 64-byte Schnorr signature (default sighash, no sighash byte).
+
+| Exposed coin | scriptSig | Witness | Spend weight |
+|---|---|---|---|
+| P2PK (either) | `48 <72>`: 73 bytes | none | 4 × (36 + 1 + 73 + 4) = 456 |
+| Bare multisig m-of-n | `00`, then m × `48 <72>`: 1 + 73m bytes | none | 4 × (36 + len(1 + 73m) + 1 + 73m + 4) |
+| P2TR | empty | `[<64>]`: 1 + 1 + 64 = 66 bytes | 4 × (36 + 1 + 4) + 66 = 230 |
+
+`len(x)` is the compact size of the scriptSig length: 1 byte up to 252, 3 bytes above. So bare multisig is 460 at m = 1, 752 at m = 2, 1,044 at m = 3, and 4 × (36 + 3 + 1,169 + 4) = 4,848 at m = 16.
+
+P2TR is the key-path spend. Coins that can only be spent by script path (such as inscription commit outputs) cost more, so for them this is a lower bound.
+
+### PQ output
+
+A BIP-360 style output: 8-byte value, 1-byte script length, 34-byte scriptPubKey (a version opcode and a 32-byte push). 43 bytes, 172 WU.
+
+### Floor and ceiling
+
+- **Floor** (perfect consolidation): the sum of the coins' spend weights. Transaction overhead and outputs are shared by so many coins that they round to nothing.
+- **Ceiling** (one coin per transaction, 1 input, 1 output): spend weight + 40 (version 4, input count 1, output count 1, locktime 4 bytes, at 4 WU each) + 172 (the PQ output), + 2 for a P2TR coin (the segwit marker and flag at 1 WU each).
+
+So the ceiling is 668 per P2PK coin, 672 for bare multisig 1-of-n, 964 for 2-of-n, 1,256 for 3-of-n, and 444 per P2TR coin.
+
+Blocks = weight ÷ 4,000,000, assuming blocks hold nothing but moves. Every result is also reported for coins of at least 546 sats only, leaving out inscription postage and data outputs nobody will pay to move.

@@ -3,6 +3,7 @@
 mod aggregate;
 mod fee;
 mod migration;
+mod move_cost;
 mod parser;
 mod snapshot;
 
@@ -15,6 +16,7 @@ pub use migration::{
     BaselineSpendType, InputResult, KeyExposure, Migration, MultisigThreshold, ParameterSet,
     UnmappedReason, migrate,
 };
+pub use move_cost::{ExposedType, MoveCost, MoveCostRow, MoveCostTotals, move_cost};
 pub use parser::ParseError;
 pub use snapshot::{Coin, CoinScript, Snapshot, SnapshotError, SnapshotHeader, read_snapshot};
 

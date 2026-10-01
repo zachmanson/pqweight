@@ -151,7 +151,7 @@ impl BaselineSpendType {
 
 /// The m-of-n shape of a multisig spend: n public keys in its script, m
 /// signatures in its witness.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
 pub struct MultisigThreshold {
     pub m: u8,
     pub n: u8,
@@ -997,6 +997,12 @@ fn multisig_threshold(items: &[&[u8]], key_sizes: KeySizes) -> Option<MultisigTh
     let signatures_match = signatures.len() == usize::from(threshold.m)
         && signatures.iter().all(|s| is_strict_der_signature(s));
     (dummy.is_empty() && signatures_match).then_some(threshold)
+}
+
+/// The threshold of a bare multisig scriptPubKey: exactly `OP_m <n keys> OP_n
+/// OP_CHECKMULTISIG` with 33 or 65-byte keys, read as a P2SH multisig script is.
+pub(crate) fn bare_multisig_threshold(script: &[u8]) -> Option<MultisigThreshold> {
+    parse_multisig_script(script, KeySizes::CompressedOrUncompressed)
 }
 
 /// Most keys a standard multisig script can hold (Bitcoin Core's

@@ -22,6 +22,13 @@ Modes:
 - `<sample file>`: one transaction hex per line, as `pqweight aggregate` reads (from
   `scripts/fetch-blocks.py`). Counts are reported but zero counts don't fail.
 
+In `--fixtures` mode it also checks Move cost (ticket 22, "Move layouts" in the same doc)
+on every snapshot Fixture in `<dir>/snapshot/`: it classifies each coin from the Oracle's
+full scriptPubKey (not from the snapshot's compressed form pqweight reads), builds the
+1-input, 1-output move transaction, measures it, and compares every row's coin count,
+value, floor and ceiling against `pqweight move-cost --json`, all coins and at least 546
+sats. Fails if any Exposed coin kind has no coin in the Fixtures.
+
 Exits non-zero on any mismatch.
 
 Usage:
@@ -342,6 +349,104 @@ def check_transaction(label: str, raw: bytes, result: dict, scheme: str, counts:
                 mismatches.append(f"{name} {scheme}: migrated.{field} pqweight {theirs.get(field)}, second calculation {value}")
 
 
+# --- Move layouts (docs/migration-templates.md, "Move layouts") ----------------------
+
+SECP256K1_P = 2**256 - 2**32 - 977
+DUST_LIMIT = 546
+MOVE_KINDS = {"P2PK compressed", "P2PK uncompressed", "bare multisig", "P2TR"}
+
+
+def on_curve(x: int, y: int) -> bool:
+    return x < SECP256K1_P and y < SECP256K1_P and (y * y - x**3 - 7) % SECP256K1_P == 0
+
+
+def script_number(op: tuple) -> int | None:
+    opcode, _, data = op
+    if 0x51 <= opcode <= 0x60:
+        return opcode - 0x50
+    if data is not None and len(data) == 1 and 17 <= data[0] <= 0x7F:
+        return data[0]
+    return None
+
+
+def exposed_kind(script: bytes) -> tuple[str, tuple[int, int] | None] | None:
+    """The Exposed coin kind of a scriptPubKey ("Which coins"), with (m, n) for bare multisig."""
+    if len(script) == 35 and script[0] == 33 and script[1] in (2, 3) and script[34] == OP_CHECKSIG:
+        return ("P2PK compressed", None)
+    if len(script) == 67 and script[0] == 65 and script[1] == 4 and script[66] == OP_CHECKSIG:
+        x, y = int.from_bytes(script[2:34], "big"), int.from_bytes(script[34:66], "big")
+        return ("P2PK uncompressed", None) if on_curve(x, y) else None
+    if len(script) == 34 and script[0] == 0x51 and script[1] == 0x20:
+        return ("P2TR", None)
+    try:
+        ops = script_ops(script)
+    except ValueError:
+        return None
+    if len(ops) < 4 or ops[-1][0] != OP_CHECKMULTISIG:
+        return None
+    m, n, keys = script_number(ops[0]), script_number(ops[-2]), ops[1:-2]
+    direct_keys = all(op[0] <= 0x4B and op[2] is not None and len(op[2]) in (33, 65) for op in keys)
+    if m is None or n is None or not (1 <= m <= n <= 20) or len(keys) != n or not direct_keys:
+        return None
+    return ("bare multisig", (m, n))
+
+
+DER_72 = bytes([0x30, 0x45, 0x02, 0x20]) + b"\x11" * 32 + bytes([0x02, 0x21, 0x00]) + b"\x22" * 32 + b"\x01"
+SCHNORR_64 = b"\x33" * 64
+PQ_OUTPUT = (1000).to_bytes(8, "little") + compact_size(34) + bytes([0x53, 0x20]) + b"\x44" * 32
+
+
+def move_transaction(kind: str, threshold: tuple[int, int] | None) -> dict:
+    """The 1-input, 1-output transaction that moves one coin of `kind` into a PQ output."""
+    assert len(DER_72) == 72
+    if kind in ("P2PK compressed", "P2PK uncompressed"):
+        script_sig, witness = push(DER_72), []
+    elif kind == "bare multisig":
+        script_sig, witness = bytes([OP_0]) + push(DER_72) * threshold[0], []
+    else:
+        script_sig, witness = b"", [SCHNORR_64]
+    tx_input = {"outpoint": b"\x00" * 36, "script_sig": script_sig, "sequence": b"\xff" * 4, "witness": witness}
+    return {"version": b"\x02\x00\x00\x00", "inputs": [tx_input], "outputs": [PQ_OUTPUT], "locktime": b"\x00" * 4}
+
+
+def check_move_cost(binary: str, snapshot: Path, oracle_path: Path, kinds_seen: set, mismatches: list) -> None:
+    oracle = json.loads(oracle_path.read_text())["oracle"]
+    ours: dict = {}
+    for coin in oracle["coins"]:
+        kind = exposed_kind(bytes.fromhex(coin["script"]))
+        if kind is None:
+            continue
+        kinds_seen.add(kind[0])
+        tx = move_transaction(*kind)
+        segwit = has_witness(tx)
+        floor = input_weight(tx["inputs"][0], segwit)
+        ceiling = measure(tx)["weight"]
+        for cut in ("all", "above_dust") if coin["value"] >= DUST_LIMIT else ("all",):
+            totals = ours.setdefault((kind, cut), {"coins": 0, "value": 0, "floor_weight": 0, "ceiling_weight": 0})
+            totals["coins"] += 1
+            totals["value"] += coin["value"]
+            totals["floor_weight"] += floor
+            totals["ceiling_weight"] += ceiling
+
+    completed = subprocess.run([binary, "move-cost", "--json", str(snapshot)], capture_output=True, text=True, check=True)
+    result = json.loads(completed.stdout)
+    name = snapshot.name
+    if result["scanned"]["coins"] != len(oracle["coins"]):
+        mismatches.append(f"{name}: pqweight scanned {result['scanned']['coins']} coins, the Oracle lists {len(oracle['coins'])}")
+    theirs: dict = {}
+    for row in result["rows"]:
+        threshold = (row["threshold"]["m"], row["threshold"]["n"]) if "threshold" in row else None
+        for cut in ("all", "above_dust"):
+            if row[cut]["coins"]:
+                theirs[((row["exposed_type"], threshold), cut)] = {
+                    field: row[cut][field] for field in ("coins", "value", "floor_weight", "ceiling_weight")
+                }
+    for key in sorted(ours.keys() | theirs.keys(), key=str):
+        if ours.get(key) != theirs.get(key):
+            mismatches.append(f"{name} {key}: pqweight {theirs.get(key)}, second calculation {ours.get(key)}")
+    print(f"move cost ({name}): {sum(1 for _, cut in ours if cut == 'all')} rows compared")
+
+
 def run_pqweight(binary: str, scheme: str, hex_lines: list[str]) -> list[dict]:
     completed = subprocess.run(
         [binary, "migrate", "--scheme", scheme, "--json-lines"],
@@ -389,6 +494,11 @@ def main(argv: list[str]) -> int:
         print(f"  {spend_type:<{width}}  {row}")
 
     if fixtures:
+        kinds_seen: set = set()
+        for snapshot in sorted((Path(argv[2]) / "snapshot").glob("*.dat")):
+            check_move_cost(binary, snapshot, snapshot.with_suffix(".json"), kinds_seen, mismatches)
+        for kind in sorted(MOVE_KINDS - kinds_seen):
+            mismatches.append(f"move cost {kind}: no coin in the snapshot Fixtures")
         for spend_type in sorted(TEMPLATES.keys() - ALLOWED_UNCOMPARED):
             for scheme in PARAMETER_SETS:
                 if counts.get((spend_type, scheme), 0) == 0:

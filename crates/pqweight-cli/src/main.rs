@@ -3,9 +3,9 @@ use std::io::Read;
 use std::process::ExitCode;
 
 use pqweight::{
-    AggregateResult, BaselineSpendType, BreakdownKind, BreakdownRow, ExposureRow, FeeRate,
-    InputResult, KeyExposure, Migration, MultisigThreshold, ParameterSet, TransactionWeight,
-    UnmappedReason, aggregate, fee,
+    AggregateResult, BaselineSpendType, BreakdownKind, BreakdownRow, ExposedType, ExposureRow,
+    FeeRate, InputResult, KeyExposure, Migration, MoveCost, MoveCostTotals, MultisigThreshold,
+    ParameterSet, SnapshotHeader, TransactionWeight, UnmappedReason, aggregate, fee, read_snapshot,
 };
 
 fn main() -> ExitCode {
@@ -27,11 +27,12 @@ fn run(args: &[String]) -> Result<String, String> {
         Some("weight") => run_weight(&args[1..]),
         Some("migrate") => run_migrate(&args[1..]),
         Some("aggregate") => run_aggregate(&args[1..]),
+        Some("move-cost") => run_move_cost(&args[1..]),
         _ => Err(USAGE.to_string()),
     }
 }
 
-const USAGE: &str = "usage: pqweight weight [--json] [<hex>]\n       pqweight migrate --scheme <scheme> [--fee-rate <rate>] [--json] [<hex>]\n       pqweight migrate --scheme <scheme> [--fee-rate <rate>] --json-lines [<path>]\n       pqweight aggregate --scheme <scheme> [--fee-rate <rate>] [--json] [<path>]";
+const USAGE: &str = "usage: pqweight weight [--json] [<hex>]\n       pqweight migrate --scheme <scheme> [--fee-rate <rate>] [--json] [<hex>]\n       pqweight migrate --scheme <scheme> [--fee-rate <rate>] --json-lines [<path>]\n       pqweight aggregate --scheme <scheme> [--fee-rate <rate>] [--json] [<path>]\n       pqweight move-cost [--json] <snapshot>";
 
 fn run_weight(args: &[String]) -> Result<String, String> {
     let json = args.iter().any(|arg| arg == "--json");
@@ -166,6 +167,177 @@ fn run_aggregate(args: &[String]) -> Result<String, String> {
     } else {
         Ok(aggregate_human(&result))
     }
+}
+
+/// Stated assumptions of every Move cost result (`docs/migration-templates.md`,
+/// "Move layouts").
+const MOVE_COST_ASSUMPTIONS: [&str; 6] = [
+    "coins move before any soft fork disables ECDSA or Schnorr signatures, spent with today's signatures",
+    "each signature is a 72-byte DER ECDSA signature, or a 64-byte Schnorr signature for P2TR",
+    "P2TR coins move by key path; script-path-only coins cost more, so for them this is a lower bound",
+    "each move pays into a BIP-360 style PQ output of 43 bytes (172 WU)",
+    "floor: perfect consolidation (spend weights only); ceiling: one coin per transaction, 1 input and 1 output",
+    "blocks hold nothing but moves; coins exposed only by address reuse are not counted, so every number is a lower bound",
+];
+
+fn run_move_cost(args: &[String]) -> Result<String, String> {
+    let json = args.iter().any(|arg| arg == "--json");
+    let positional: Vec<&String> = args.iter().filter(|arg| *arg != "--json").collect();
+    let [path] = positional.as_slice() else {
+        return Err(USAGE.to_string());
+    };
+    let file = std::fs::File::open(path).map_err(|err| format!("could not read {path}: {err}"))?;
+    let snapshot = read_snapshot(file).map_err(|err| format!("{path}: {err}"))?;
+    let header = snapshot.header;
+    let mut cost = MoveCost::new();
+    for coin in snapshot {
+        cost.add(&coin.map_err(|err| format!("{path}: {err}"))?);
+    }
+    if json {
+        Ok(move_cost_json(&header, &cost))
+    } else {
+        Ok(move_cost_human(&header, &cost))
+    }
+}
+
+/// A hash as Core displays it: the serialized bytes reversed, in hex.
+fn display_hash(hash: &[u8; 32]) -> String {
+    hash.iter().rev().fold(String::new(), |mut hex, byte| {
+        // Writing to a String never fails.
+        let _ = write!(hex, "{byte:02x}");
+        hex
+    })
+}
+
+fn exposed_type_name(exposed_type: ExposedType) -> &'static str {
+    match exposed_type {
+        ExposedType::P2pkCompressed => "P2PK compressed",
+        ExposedType::P2pkUncompressed => "P2PK uncompressed",
+        ExposedType::BareMultisig(_) => "bare multisig",
+        ExposedType::P2tr => "P2TR",
+    }
+}
+
+/// The type's name with its threshold, such as `bare multisig 1-of-3`.
+fn exposed_type_label(exposed_type: ExposedType) -> String {
+    match exposed_type {
+        ExposedType::BareMultisig(MultisigThreshold { m, n }) => {
+            format!("{} {m}-of-{n}", exposed_type_name(exposed_type))
+        }
+        _ => exposed_type_name(exposed_type).to_string(),
+    }
+}
+
+/// Satoshis as BTC with all 8 decimal places.
+fn btc(sats: u64) -> String {
+    format!("{}.{:08}", sats / 100_000_000, sats % 100_000_000)
+}
+
+fn move_cost_totals_json(totals: &MoveCostTotals) -> String {
+    format!(
+        r#"{{"coins":{},"value":{},"floor_weight":{},"floor_blocks":{},"ceiling_weight":{},"ceiling_blocks":{}}}"#,
+        totals.coins,
+        totals.value,
+        totals.floor_weight,
+        totals.floor_blocks(),
+        totals.ceiling_weight,
+        totals.ceiling_blocks(),
+    )
+}
+
+/// `move-cost --json`. Values are in satoshis.
+fn move_cost_json(header: &SnapshotHeader, cost: &MoveCost) -> String {
+    let rows: Vec<String> = cost
+        .rows
+        .iter()
+        .map(|row| {
+            let threshold = match row.exposed_type {
+                ExposedType::BareMultisig(MultisigThreshold { m, n }) => {
+                    format!(r#","threshold":{{"m":{m},"n":{n}}}"#)
+                }
+                _ => String::new(),
+            };
+            format!(
+                r#"{{"exposed_type":"{}"{threshold},"all":{},"above_dust":{}}}"#,
+                exposed_type_name(row.exposed_type),
+                move_cost_totals_json(&row.all),
+                move_cost_totals_json(&row.above_dust),
+            )
+        })
+        .collect();
+    let (all, above_dust) = cost.total();
+    let assumptions: Vec<String> = MOVE_COST_ASSUMPTIONS
+        .iter()
+        .map(|a| json_string(a))
+        .collect();
+    format!(
+        r#"{{"snapshot":{{"base_block_hash":"{}","coins":{}}},"scanned":{{"coins":{},"value":{}}},"rows":[{}],"total":{{"all":{},"above_dust":{}}},"assumptions":[{}]}}"#,
+        display_hash(&header.base_block_hash),
+        header.coins_count,
+        cost.scanned_coins,
+        cost.scanned_value,
+        rows.join(","),
+        move_cost_totals_json(&all),
+        move_cost_totals_json(&above_dust),
+        assumptions.join(","),
+    )
+}
+
+fn move_cost_human(header: &SnapshotHeader, cost: &MoveCost) -> String {
+    let mut lines = vec![
+        format!(
+            "snapshot base block: {}",
+            display_hash(&header.base_block_hash)
+        ),
+        format!(
+            "coins scanned: {} ({} BTC)",
+            cost.scanned_coins,
+            btc(cost.scanned_value)
+        ),
+    ];
+    let width = cost
+        .rows
+        .iter()
+        .map(|row| exposed_type_label(row.exposed_type).len())
+        .chain(["total".len()])
+        .max()
+        .unwrap_or(0);
+    let line = |label: &str, totals: &MoveCostTotals| {
+        format!(
+            "  {label:<width$}  {:>10}  {:>20}  {:>14}  {:>10.2}  {:>14}  {:>10.2}",
+            totals.coins,
+            btc(totals.value),
+            totals.floor_weight,
+            totals.floor_blocks(),
+            totals.ceiling_weight,
+            totals.ceiling_blocks(),
+        )
+    };
+    let (all, above_dust) = cost.total();
+    for (heading, total, pick) in [
+        (
+            "all Exposed coins (coins, BTC, floor WU, floor blocks, ceiling WU, ceiling blocks):",
+            all,
+            (|row| row.all) as fn(&pqweight::MoveCostRow) -> MoveCostTotals,
+        ),
+        ("coins of at least 546 sats:", above_dust, |row| {
+            row.above_dust
+        }),
+    ] {
+        lines.push(heading.to_string());
+        if cost.rows.is_empty() {
+            lines.push("  (none)".to_string());
+        }
+        for row in &cost.rows {
+            lines.push(line(&exposed_type_label(row.exposed_type), &pick(row)));
+        }
+        lines.push(line("total", &total));
+    }
+    lines.push("assumptions:".to_string());
+    for assumption in MOVE_COST_ASSUMPTIONS {
+        lines.push(format!("- {assumption}"));
+    }
+    lines.join("\n")
 }
 
 /// `aggregate --json`: the same numbers as the human output, with the scheme and
