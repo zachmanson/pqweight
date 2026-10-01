@@ -1,0 +1,2 @@
+# UTXO snapshot Fixtures are raw bytes; line-ending conversion would corrupt them.
+*.dat binary

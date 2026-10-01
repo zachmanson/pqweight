@@ -4,6 +4,7 @@ mod aggregate;
 mod fee;
 mod migration;
 mod parser;
+mod snapshot;
 
 pub use aggregate::{
     AggregateCounts, AggregateError, AggregateFeeTotals, AggregateResult, AggregateTotals,
@@ -15,6 +16,7 @@ pub use migration::{
     UnmappedReason, migrate,
 };
 pub use parser::ParseError;
+pub use snapshot::{Coin, CoinScript, Snapshot, SnapshotError, SnapshotHeader, read_snapshot};
 
 /// The crate version, so the CLI can report which library it was built against.
 #[must_use]

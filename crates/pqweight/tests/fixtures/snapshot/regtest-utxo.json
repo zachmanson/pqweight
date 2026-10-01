@@ -1,0 +1,1075 @@
+{
+    "description":  "Regtest UTXO snapshot (dumptxoutset latest) holding one coin of each script type Move cost handles, plus coinbase and change coins",
+    "oracle":  {
+                   "base_hash":  "14dee03c9a1cb2f6977cf786c2c51e609014bd96acbe603e5b3c2f3c08a12cb6",
+                   "base_height":  102,
+                   "coins_count":  118,
+                   "total_amount":  510000000000,
+                   "coins":  [
+                                 {
+                                     "txid":  "8ae732957fd4f01bde551ee1c14de9daa509b6e0381226c81113e5cd4679051a",
+                                     "vout":  0,
+                                     "height":  2,
+                                     "coinbase":  true,
+                                     "value":  5000000000,
+                                     "script":  "00145cb4f8304213f2205f1a469b0656d927dec0cc1c",
+                                     "type":  "witness_v0_keyhash"
+                                 },
+                                 {
+                                     "txid":  "e1ba5d0c5e1b531dee74d74931030fd81754ccbf2589a200f33555091ec1bd49",
+                                     "vout":  0,
+                                     "height":  3,
+                                     "coinbase":  true,
+                                     "value":  5000000000,
+                                     "script":  "00145cb4f8304213f2205f1a469b0656d927dec0cc1c",
+                                     "type":  "witness_v0_keyhash"
+                                 },
+                                 {
+                                     "txid":  "2dce8fe2b776292e702a1f08d0feffbf00ca19f3cddd0477b0c1e7fd5c77ea59",
+                                     "vout":  0,
+                                     "height":  4,
+                                     "coinbase":  true,
+                                     "value":  5000000000,
+                                     "script":  "00145cb4f8304213f2205f1a469b0656d927dec0cc1c",
+                                     "type":  "witness_v0_keyhash"
+                                 },
+                                 {
+                                     "txid":  "4ad2e1b03ee222e58fd9f803cf4e68fb06b252e2eacbabdd1d733af95eeb0b65",
+                                     "vout":  0,
+                                     "height":  5,
+                                     "coinbase":  true,
+                                     "value":  5000000000,
+                                     "script":  "00145cb4f8304213f2205f1a469b0656d927dec0cc1c",
+                                     "type":  "witness_v0_keyhash"
+                                 },
+                                 {
+                                     "txid":  "6004ac05dab48f7622b0e2b60a64a57177313cdd09f21c224f0954b3cd06ae87",
+                                     "vout":  0,
+                                     "height":  6,
+                                     "coinbase":  true,
+                                     "value":  5000000000,
+                                     "script":  "00145cb4f8304213f2205f1a469b0656d927dec0cc1c",
+                                     "type":  "witness_v0_keyhash"
+                                 },
+                                 {
+                                     "txid":  "810102109a36de16e14b7bcb2afd3bcba465bc4d66bc4e4f56da61d7631fa89c",
+                                     "vout":  0,
+                                     "height":  7,
+                                     "coinbase":  true,
+                                     "value":  5000000000,
+                                     "script":  "00145cb4f8304213f2205f1a469b0656d927dec0cc1c",
+                                     "type":  "witness_v0_keyhash"
+                                 },
+                                 {
+                                     "txid":  "d36361cb70057fd40916b66b7da6c94aa16d9c1787839d54a6ca9f174eebd46a",
+                                     "vout":  0,
+                                     "height":  8,
+                                     "coinbase":  true,
+                                     "value":  5000000000,
+                                     "script":  "00145cb4f8304213f2205f1a469b0656d927dec0cc1c",
+                                     "type":  "witness_v0_keyhash"
+                                 },
+                                 {
+                                     "txid":  "42df8178db4727083c346a70f332313a0ecfb5169a5bf0a322ddf3e3b30c2544",
+                                     "vout":  0,
+                                     "height":  9,
+                                     "coinbase":  true,
+                                     "value":  5000000000,
+                                     "script":  "00145cb4f8304213f2205f1a469b0656d927dec0cc1c",
+                                     "type":  "witness_v0_keyhash"
+                                 },
+                                 {
+                                     "txid":  "d2693ccb862bd702c6d265ca9b714e91da9018d6ca7240dfab97dd9b8f39ac5a",
+                                     "vout":  0,
+                                     "height":  10,
+                                     "coinbase":  true,
+                                     "value":  5000000000,
+                                     "script":  "00145cb4f8304213f2205f1a469b0656d927dec0cc1c",
+                                     "type":  "witness_v0_keyhash"
+                                 },
+                                 {
+                                     "txid":  "d2e84519731c3bfb60bb0722535412f4b3cd0ac061ef537ed6bddf690380cef4",
+                                     "vout":  0,
+                                     "height":  11,
+                                     "coinbase":  true,
+                                     "value":  5000000000,
+                                     "script":  "00145cb4f8304213f2205f1a469b0656d927dec0cc1c",
+                                     "type":  "witness_v0_keyhash"
+                                 },
+                                 {
+                                     "txid":  "fea0f3e75ebba577e64f466e550cd867d445a51c2df902da7102c745a2778db2",
+                                     "vout":  0,
+                                     "height":  12,
+                                     "coinbase":  true,
+                                     "value":  5000000000,
+                                     "script":  "00145cb4f8304213f2205f1a469b0656d927dec0cc1c",
+                                     "type":  "witness_v0_keyhash"
+                                 },
+                                 {
+                                     "txid":  "e5cbd69a5976f3eb64091526e35d3e87a1b1214641f0dc74db3513fdd2340a48",
+                                     "vout":  0,
+                                     "height":  13,
+                                     "coinbase":  true,
+                                     "value":  5000000000,
+                                     "script":  "00145cb4f8304213f2205f1a469b0656d927dec0cc1c",
+                                     "type":  "witness_v0_keyhash"
+                                 },
+                                 {
+                                     "txid":  "032eb0b92ffdb2b52106b33aca35448c13031787714dc8c9696d2943a94fea1c",
+                                     "vout":  0,
+                                     "height":  14,
+                                     "coinbase":  true,
+                                     "value":  5000000000,
+                                     "script":  "00145cb4f8304213f2205f1a469b0656d927dec0cc1c",
+                                     "type":  "witness_v0_keyhash"
+                                 },
+                                 {
+                                     "txid":  "3f44f0a4179bc71f925422a78b364e30a1157aa15e420a0dd3f31a004fd1afe1",
+                                     "vout":  0,
+                                     "height":  15,
+                                     "coinbase":  true,
+                                     "value":  5000000000,
+                                     "script":  "00145cb4f8304213f2205f1a469b0656d927dec0cc1c",
+                                     "type":  "witness_v0_keyhash"
+                                 },
+                                 {
+                                     "txid":  "5e21e6c1f55a3c80ae1859eb4b322da98ede738409afcfd211fff930a3008c81",
+                                     "vout":  0,
+                                     "height":  16,
+                                     "coinbase":  true,
+                                     "value":  5000000000,
+                                     "script":  "00145cb4f8304213f2205f1a469b0656d927dec0cc1c",
+                                     "type":  "witness_v0_keyhash"
+                                 },
+                                 {
+                                     "txid":  "a9d67259f4b3361bce6388519c0b3c65066dab762d030ddc943f0a007360f8ca",
+                                     "vout":  0,
+                                     "height":  17,
+                                     "coinbase":  true,
+                                     "value":  5000000000,
+                                     "script":  "00145cb4f8304213f2205f1a469b0656d927dec0cc1c",
+                                     "type":  "witness_v0_keyhash"
+                                 },
+                                 {
+                                     "txid":  "60e8bc7b555548fa20ef232ce1e471fa45615782b7a24535a31c964d46518bea",
+                                     "vout":  0,
+                                     "height":  18,
+                                     "coinbase":  true,
+                                     "value":  5000000000,
+                                     "script":  "00145cb4f8304213f2205f1a469b0656d927dec0cc1c",
+                                     "type":  "witness_v0_keyhash"
+                                 },
+                                 {
+                                     "txid":  "36115b743b131c5623bbce7e8ca355209e790f1e3b650056f72047745ecc5947",
+                                     "vout":  0,
+                                     "height":  19,
+                                     "coinbase":  true,
+                                     "value":  5000000000,
+                                     "script":  "00145cb4f8304213f2205f1a469b0656d927dec0cc1c",
+                                     "type":  "witness_v0_keyhash"
+                                 },
+                                 {
+                                     "txid":  "3e3845fc354fc6d968982dbd1982c94bb5d90916ce46cc95d2bbb0c9b5e86a0d",
+                                     "vout":  0,
+                                     "height":  20,
+                                     "coinbase":  true,
+                                     "value":  5000000000,
+                                     "script":  "00145cb4f8304213f2205f1a469b0656d927dec0cc1c",
+                                     "type":  "witness_v0_keyhash"
+                                 },
+                                 {
+                                     "txid":  "36857e6bb583b90aaabd33a060515bf92ce4c824e1bcb07d5d084b06bf5a01db",
+                                     "vout":  0,
+                                     "height":  21,
+                                     "coinbase":  true,
+                                     "value":  5000000000,
+                                     "script":  "00145cb4f8304213f2205f1a469b0656d927dec0cc1c",
+                                     "type":  "witness_v0_keyhash"
+                                 },
+                                 {
+                                     "txid":  "249bcfb86076f41fd7faf8231acbbfe0c7cc7e07130bd2542d3047bf6c101edf",
+                                     "vout":  0,
+                                     "height":  22,
+                                     "coinbase":  true,
+                                     "value":  5000000000,
+                                     "script":  "00145cb4f8304213f2205f1a469b0656d927dec0cc1c",
+                                     "type":  "witness_v0_keyhash"
+                                 },
+                                 {
+                                     "txid":  "710e0c598104ad27ad6611fe75fa91e4952b80d2f1869b010a830f78f04e77ba",
+                                     "vout":  0,
+                                     "height":  23,
+                                     "coinbase":  true,
+                                     "value":  5000000000,
+                                     "script":  "00145cb4f8304213f2205f1a469b0656d927dec0cc1c",
+                                     "type":  "witness_v0_keyhash"
+                                 },
+                                 {
+                                     "txid":  "e467697ccb1226fd8167192cc26be44c9661b4662e74e2c9604f9b011657f596",
+                                     "vout":  0,
+                                     "height":  24,
+                                     "coinbase":  true,
+                                     "value":  5000000000,
+                                     "script":  "00145cb4f8304213f2205f1a469b0656d927dec0cc1c",
+                                     "type":  "witness_v0_keyhash"
+                                 },
+                                 {
+                                     "txid":  "511766fa993e083b4e2e5dc7bfdc4af612f46b0301b67f6957868aecc3e9e8cf",
+                                     "vout":  0,
+                                     "height":  25,
+                                     "coinbase":  true,
+                                     "value":  5000000000,
+                                     "script":  "00145cb4f8304213f2205f1a469b0656d927dec0cc1c",
+                                     "type":  "witness_v0_keyhash"
+                                 },
+                                 {
+                                     "txid":  "f67be6c39f0c6f63c8d9f9755c9766bbb3376f01c83e0590abfb659d7eb5ffac",
+                                     "vout":  0,
+                                     "height":  26,
+                                     "coinbase":  true,
+                                     "value":  5000000000,
+                                     "script":  "00145cb4f8304213f2205f1a469b0656d927dec0cc1c",
+                                     "type":  "witness_v0_keyhash"
+                                 },
+                                 {
+                                     "txid":  "52d1ca77e3077287fe9407b54ea778ca65b21fa7cfae22f1e9e1d5b91ba0f090",
+                                     "vout":  0,
+                                     "height":  27,
+                                     "coinbase":  true,
+                                     "value":  5000000000,
+                                     "script":  "00145cb4f8304213f2205f1a469b0656d927dec0cc1c",
+                                     "type":  "witness_v0_keyhash"
+                                 },
+                                 {
+                                     "txid":  "99c95ef321c9aaf018f554ab83d22edf7073cafd9f25aba1ce0a167e078d147a",
+                                     "vout":  0,
+                                     "height":  28,
+                                     "coinbase":  true,
+                                     "value":  5000000000,
+                                     "script":  "00145cb4f8304213f2205f1a469b0656d927dec0cc1c",
+                                     "type":  "witness_v0_keyhash"
+                                 },
+                                 {
+                                     "txid":  "14c77366bb75dbb5285f6d550366e479c75dbf4cb554959c3076a0748e9ed829",
+                                     "vout":  0,
+                                     "height":  29,
+                                     "coinbase":  true,
+                                     "value":  5000000000,
+                                     "script":  "00145cb4f8304213f2205f1a469b0656d927dec0cc1c",
+                                     "type":  "witness_v0_keyhash"
+                                 },
+                                 {
+                                     "txid":  "dce2e1ad8295a2943352ef9cd495ea7a235558e9f51a8451030fef9a375d6b7f",
+                                     "vout":  0,
+                                     "height":  30,
+                                     "coinbase":  true,
+                                     "value":  5000000000,
+                                     "script":  "00145cb4f8304213f2205f1a469b0656d927dec0cc1c",
+                                     "type":  "witness_v0_keyhash"
+                                 },
+                                 {
+                                     "txid":  "f27f2fcee7f67f6c68e8c714e3abcf829c6794d234bdf1b3e8177173ea1e3adc",
+                                     "vout":  0,
+                                     "height":  31,
+                                     "coinbase":  true,
+                                     "value":  5000000000,
+                                     "script":  "00145cb4f8304213f2205f1a469b0656d927dec0cc1c",
+                                     "type":  "witness_v0_keyhash"
+                                 },
+                                 {
+                                     "txid":  "ce1787eaacbe388ed075e4de2974369f152d11aaae2eea10d1cd9cfa2c97f64d",
+                                     "vout":  0,
+                                     "height":  32,
+                                     "coinbase":  true,
+                                     "value":  5000000000,
+                                     "script":  "00145cb4f8304213f2205f1a469b0656d927dec0cc1c",
+                                     "type":  "witness_v0_keyhash"
+                                 },
+                                 {
+                                     "txid":  "fc58e24b363743239e13a35768fc57b466519012ecfa3b4bf135cf0287e94155",
+                                     "vout":  0,
+                                     "height":  33,
+                                     "coinbase":  true,
+                                     "value":  5000000000,
+                                     "script":  "00145cb4f8304213f2205f1a469b0656d927dec0cc1c",
+                                     "type":  "witness_v0_keyhash"
+                                 },
+                                 {
+                                     "txid":  "e98f51b9e0f1128f17611d88abe8f1a91fc9508aa01bdc6331fa469608c13674",
+                                     "vout":  0,
+                                     "height":  34,
+                                     "coinbase":  true,
+                                     "value":  5000000000,
+                                     "script":  "00145cb4f8304213f2205f1a469b0656d927dec0cc1c",
+                                     "type":  "witness_v0_keyhash"
+                                 },
+                                 {
+                                     "txid":  "7366c74600bbe4722f5fdebbb487358883afd8ba2a6877a9af11ef5186e2c8ca",
+                                     "vout":  0,
+                                     "height":  35,
+                                     "coinbase":  true,
+                                     "value":  5000000000,
+                                     "script":  "00145cb4f8304213f2205f1a469b0656d927dec0cc1c",
+                                     "type":  "witness_v0_keyhash"
+                                 },
+                                 {
+                                     "txid":  "03ffcb10b8d1183fb0bd01cbeda8d6f987010e48faf4a071947f432d39c9870c",
+                                     "vout":  0,
+                                     "height":  36,
+                                     "coinbase":  true,
+                                     "value":  5000000000,
+                                     "script":  "00145cb4f8304213f2205f1a469b0656d927dec0cc1c",
+                                     "type":  "witness_v0_keyhash"
+                                 },
+                                 {
+                                     "txid":  "406183155bd1961f9bfe6aa79ed980cf1be398b409c993a91af93bdafecdbfc7",
+                                     "vout":  0,
+                                     "height":  37,
+                                     "coinbase":  true,
+                                     "value":  5000000000,
+                                     "script":  "00145cb4f8304213f2205f1a469b0656d927dec0cc1c",
+                                     "type":  "witness_v0_keyhash"
+                                 },
+                                 {
+                                     "txid":  "518d8a816d37fc6188f3fd117158ec6d8a66af9772267cae8a144f70742d7522",
+                                     "vout":  0,
+                                     "height":  38,
+                                     "coinbase":  true,
+                                     "value":  5000000000,
+                                     "script":  "00145cb4f8304213f2205f1a469b0656d927dec0cc1c",
+                                     "type":  "witness_v0_keyhash"
+                                 },
+                                 {
+                                     "txid":  "93b61e8c46cb517aa1791abafad96daf73551a6e2454b563e5da1ccde6aafa49",
+                                     "vout":  0,
+                                     "height":  39,
+                                     "coinbase":  true,
+                                     "value":  5000000000,
+                                     "script":  "00145cb4f8304213f2205f1a469b0656d927dec0cc1c",
+                                     "type":  "witness_v0_keyhash"
+                                 },
+                                 {
+                                     "txid":  "51f85fb3b9b1e0a73e17e3e9792a8c93662e001caefdf93d596b234dbead066e",
+                                     "vout":  0,
+                                     "height":  40,
+                                     "coinbase":  true,
+                                     "value":  5000000000,
+                                     "script":  "00145cb4f8304213f2205f1a469b0656d927dec0cc1c",
+                                     "type":  "witness_v0_keyhash"
+                                 },
+                                 {
+                                     "txid":  "ec51886896b1349a69b46fd19f715e9af4c35b6f8da4d8da4f69efc300300d70",
+                                     "vout":  0,
+                                     "height":  41,
+                                     "coinbase":  true,
+                                     "value":  5000000000,
+                                     "script":  "00145cb4f8304213f2205f1a469b0656d927dec0cc1c",
+                                     "type":  "witness_v0_keyhash"
+                                 },
+                                 {
+                                     "txid":  "f904a2a2d555dfa3b7c9b1c7ac6e6a9deaab3eabffceefe1bfffd77fc561ea72",
+                                     "vout":  0,
+                                     "height":  42,
+                                     "coinbase":  true,
+                                     "value":  5000000000,
+                                     "script":  "00145cb4f8304213f2205f1a469b0656d927dec0cc1c",
+                                     "type":  "witness_v0_keyhash"
+                                 },
+                                 {
+                                     "txid":  "885e0e63489654eafbc1bd9ec98e762436dfac39fce74a37fcc41541ed6b3df1",
+                                     "vout":  0,
+                                     "height":  43,
+                                     "coinbase":  true,
+                                     "value":  5000000000,
+                                     "script":  "00145cb4f8304213f2205f1a469b0656d927dec0cc1c",
+                                     "type":  "witness_v0_keyhash"
+                                 },
+                                 {
+                                     "txid":  "d9b6b81354ae2fff3797326c34aca90dec23f9504723a6c762f05226e43d30af",
+                                     "vout":  0,
+                                     "height":  44,
+                                     "coinbase":  true,
+                                     "value":  5000000000,
+                                     "script":  "00145cb4f8304213f2205f1a469b0656d927dec0cc1c",
+                                     "type":  "witness_v0_keyhash"
+                                 },
+                                 {
+                                     "txid":  "ab20ea92c2b839a2a407601a16eda32a836fccffe6d86bc9e84a72efdb50a95f",
+                                     "vout":  0,
+                                     "height":  45,
+                                     "coinbase":  true,
+                                     "value":  5000000000,
+                                     "script":  "00145cb4f8304213f2205f1a469b0656d927dec0cc1c",
+                                     "type":  "witness_v0_keyhash"
+                                 },
+                                 {
+                                     "txid":  "a02cb8b0abf1a4b22e246f363f65f1379edf0b2998dd52c3f85646b7a240e480",
+                                     "vout":  0,
+                                     "height":  46,
+                                     "coinbase":  true,
+                                     "value":  5000000000,
+                                     "script":  "00145cb4f8304213f2205f1a469b0656d927dec0cc1c",
+                                     "type":  "witness_v0_keyhash"
+                                 },
+                                 {
+                                     "txid":  "9704996a99f4ad53c379b1cbfc9ab01c17eb4c62fda1047374fe36523711daf2",
+                                     "vout":  0,
+                                     "height":  47,
+                                     "coinbase":  true,
+                                     "value":  5000000000,
+                                     "script":  "00145cb4f8304213f2205f1a469b0656d927dec0cc1c",
+                                     "type":  "witness_v0_keyhash"
+                                 },
+                                 {
+                                     "txid":  "82c23f39e4af205dcec8aef25537fe2ba8a86ba8832e91e3676bbdb74a503540",
+                                     "vout":  0,
+                                     "height":  48,
+                                     "coinbase":  true,
+                                     "value":  5000000000,
+                                     "script":  "00145cb4f8304213f2205f1a469b0656d927dec0cc1c",
+                                     "type":  "witness_v0_keyhash"
+                                 },
+                                 {
+                                     "txid":  "1ccf556fcbcc4662e4487afc895ebc3e233fd02d891a2b7b0be70cfcea470ba3",
+                                     "vout":  0,
+                                     "height":  49,
+                                     "coinbase":  true,
+                                     "value":  5000000000,
+                                     "script":  "00145cb4f8304213f2205f1a469b0656d927dec0cc1c",
+                                     "type":  "witness_v0_keyhash"
+                                 },
+                                 {
+                                     "txid":  "d3f1433f2742d3102cbad0ba18b41ff7ac9980986884fa1fe4dc2eaae12b97f6",
+                                     "vout":  0,
+                                     "height":  50,
+                                     "coinbase":  true,
+                                     "value":  5000000000,
+                                     "script":  "00145cb4f8304213f2205f1a469b0656d927dec0cc1c",
+                                     "type":  "witness_v0_keyhash"
+                                 },
+                                 {
+                                     "txid":  "25541b69b9078c4c04d782a3cf396de705845de8ca0723bdd8d1f3e9779d2b08",
+                                     "vout":  0,
+                                     "height":  51,
+                                     "coinbase":  true,
+                                     "value":  5000000000,
+                                     "script":  "00145cb4f8304213f2205f1a469b0656d927dec0cc1c",
+                                     "type":  "witness_v0_keyhash"
+                                 },
+                                 {
+                                     "txid":  "bf9e12c137e61f09d266b123e4d6cb3403c6b5e1dc660070367c73b7359d0fd4",
+                                     "vout":  0,
+                                     "height":  52,
+                                     "coinbase":  true,
+                                     "value":  5000000000,
+                                     "script":  "00145cb4f8304213f2205f1a469b0656d927dec0cc1c",
+                                     "type":  "witness_v0_keyhash"
+                                 },
+                                 {
+                                     "txid":  "0c24c905e17a2abcbb55d09f36a19f8d066a769e3feb4b40f3b4de03e44bdd33",
+                                     "vout":  0,
+                                     "height":  53,
+                                     "coinbase":  true,
+                                     "value":  5000000000,
+                                     "script":  "00145cb4f8304213f2205f1a469b0656d927dec0cc1c",
+                                     "type":  "witness_v0_keyhash"
+                                 },
+                                 {
+                                     "txid":  "2170c9f958e67c1551699a03fde664f15e9446b76da85855b23c1beb49b38e57",
+                                     "vout":  0,
+                                     "height":  54,
+                                     "coinbase":  true,
+                                     "value":  5000000000,
+                                     "script":  "00145cb4f8304213f2205f1a469b0656d927dec0cc1c",
+                                     "type":  "witness_v0_keyhash"
+                                 },
+                                 {
+                                     "txid":  "6834df3138c308a972d6b7dd7edb999e39b71fc4398fad82038a46ba5b133537",
+                                     "vout":  0,
+                                     "height":  55,
+                                     "coinbase":  true,
+                                     "value":  5000000000,
+                                     "script":  "00145cb4f8304213f2205f1a469b0656d927dec0cc1c",
+                                     "type":  "witness_v0_keyhash"
+                                 },
+                                 {
+                                     "txid":  "b14dec477689c8d653f9da6592f2eb92c1cf4acd183b19e95eb60417088a38c9",
+                                     "vout":  0,
+                                     "height":  56,
+                                     "coinbase":  true,
+                                     "value":  5000000000,
+                                     "script":  "00145cb4f8304213f2205f1a469b0656d927dec0cc1c",
+                                     "type":  "witness_v0_keyhash"
+                                 },
+                                 {
+                                     "txid":  "fe228bcbc0fc4fab79d1b3d707e939b49c37ccd328b70870fd9d638cce7b6ce6",
+                                     "vout":  0,
+                                     "height":  57,
+                                     "coinbase":  true,
+                                     "value":  5000000000,
+                                     "script":  "00145cb4f8304213f2205f1a469b0656d927dec0cc1c",
+                                     "type":  "witness_v0_keyhash"
+                                 },
+                                 {
+                                     "txid":  "49f153416f333ebcdc6e5ed14aff817fd6a823f5d776dc185159c6bf1e70287b",
+                                     "vout":  0,
+                                     "height":  58,
+                                     "coinbase":  true,
+                                     "value":  5000000000,
+                                     "script":  "00145cb4f8304213f2205f1a469b0656d927dec0cc1c",
+                                     "type":  "witness_v0_keyhash"
+                                 },
+                                 {
+                                     "txid":  "75b02187d9515af1823e66f25a63ab229925907008f37840b25635632b7e63d6",
+                                     "vout":  0,
+                                     "height":  59,
+                                     "coinbase":  true,
+                                     "value":  5000000000,
+                                     "script":  "00145cb4f8304213f2205f1a469b0656d927dec0cc1c",
+                                     "type":  "witness_v0_keyhash"
+                                 },
+                                 {
+                                     "txid":  "6e671b37c220eeeb110cca1433cce681bed364efe02fcae5fad4373b1157ea85",
+                                     "vout":  0,
+                                     "height":  60,
+                                     "coinbase":  true,
+                                     "value":  5000000000,
+                                     "script":  "00145cb4f8304213f2205f1a469b0656d927dec0cc1c",
+                                     "type":  "witness_v0_keyhash"
+                                 },
+                                 {
+                                     "txid":  "aa137c525e8bd6764410eed796c9cd0533f35c5e53188147f42d985d4cc1228b",
+                                     "vout":  0,
+                                     "height":  61,
+                                     "coinbase":  true,
+                                     "value":  5000000000,
+                                     "script":  "00145cb4f8304213f2205f1a469b0656d927dec0cc1c",
+                                     "type":  "witness_v0_keyhash"
+                                 },
+                                 {
+                                     "txid":  "7b6c8984b6d983388ae6580f333a4c5dda30781c5fbc63c2496b1b04ffe2651a",
+                                     "vout":  0,
+                                     "height":  62,
+                                     "coinbase":  true,
+                                     "value":  5000000000,
+                                     "script":  "00145cb4f8304213f2205f1a469b0656d927dec0cc1c",
+                                     "type":  "witness_v0_keyhash"
+                                 },
+                                 {
+                                     "txid":  "ab766e7e172b7a6ae64a5ce8a84317f0674b9bf23115eec379f8351d6b389169",
+                                     "vout":  0,
+                                     "height":  63,
+                                     "coinbase":  true,
+                                     "value":  5000000000,
+                                     "script":  "00145cb4f8304213f2205f1a469b0656d927dec0cc1c",
+                                     "type":  "witness_v0_keyhash"
+                                 },
+                                 {
+                                     "txid":  "fc754683831ee5f129eb92b510bbd4fe4a4d4deb03d10e3e280e9d2a0efc5cfc",
+                                     "vout":  0,
+                                     "height":  64,
+                                     "coinbase":  true,
+                                     "value":  5000000000,
+                                     "script":  "00145cb4f8304213f2205f1a469b0656d927dec0cc1c",
+                                     "type":  "witness_v0_keyhash"
+                                 },
+                                 {
+                                     "txid":  "8dbdf3ec07ca0671798c415303b9445dedf4190f9fba81b335f2f86d5e4b3fff",
+                                     "vout":  0,
+                                     "height":  65,
+                                     "coinbase":  true,
+                                     "value":  5000000000,
+                                     "script":  "00145cb4f8304213f2205f1a469b0656d927dec0cc1c",
+                                     "type":  "witness_v0_keyhash"
+                                 },
+                                 {
+                                     "txid":  "15ab1f0b88699f125542eca32a98ee9abd6584994d03909be4583fa9be895ef1",
+                                     "vout":  0,
+                                     "height":  66,
+                                     "coinbase":  true,
+                                     "value":  5000000000,
+                                     "script":  "00145cb4f8304213f2205f1a469b0656d927dec0cc1c",
+                                     "type":  "witness_v0_keyhash"
+                                 },
+                                 {
+                                     "txid":  "a73c2dc62433b01dfd5277afeaedb11dba0f32d5b4c47181c2662bbb54e6fd47",
+                                     "vout":  0,
+                                     "height":  67,
+                                     "coinbase":  true,
+                                     "value":  5000000000,
+                                     "script":  "00145cb4f8304213f2205f1a469b0656d927dec0cc1c",
+                                     "type":  "witness_v0_keyhash"
+                                 },
+                                 {
+                                     "txid":  "720ba1cbaf1fec164e08c19040e7793388298b59dcd82bcbb6aa900cb96bdadd",
+                                     "vout":  0,
+                                     "height":  68,
+                                     "coinbase":  true,
+                                     "value":  5000000000,
+                                     "script":  "00145cb4f8304213f2205f1a469b0656d927dec0cc1c",
+                                     "type":  "witness_v0_keyhash"
+                                 },
+                                 {
+                                     "txid":  "be6bd51b8bdbe84000cd67603579a68fbabe7832d98d1c5a287b9aa939653247",
+                                     "vout":  0,
+                                     "height":  69,
+                                     "coinbase":  true,
+                                     "value":  5000000000,
+                                     "script":  "00145cb4f8304213f2205f1a469b0656d927dec0cc1c",
+                                     "type":  "witness_v0_keyhash"
+                                 },
+                                 {
+                                     "txid":  "8fe9e8e2ec5ff2c4634b75b9256b53aa207f335cee892b2d74995319596e885f",
+                                     "vout":  0,
+                                     "height":  70,
+                                     "coinbase":  true,
+                                     "value":  5000000000,
+                                     "script":  "00145cb4f8304213f2205f1a469b0656d927dec0cc1c",
+                                     "type":  "witness_v0_keyhash"
+                                 },
+                                 {
+                                     "txid":  "74cf1c6e2d657217c0b439686bc55111620ab0c718fc0edb24572828cf0447bb",
+                                     "vout":  0,
+                                     "height":  71,
+                                     "coinbase":  true,
+                                     "value":  5000000000,
+                                     "script":  "00145cb4f8304213f2205f1a469b0656d927dec0cc1c",
+                                     "type":  "witness_v0_keyhash"
+                                 },
+                                 {
+                                     "txid":  "e4e47a2debbab6d9bd5cba1fe502d2ba91229aa77f2639998ba8cfbefb865ec4",
+                                     "vout":  0,
+                                     "height":  72,
+                                     "coinbase":  true,
+                                     "value":  5000000000,
+                                     "script":  "00145cb4f8304213f2205f1a469b0656d927dec0cc1c",
+                                     "type":  "witness_v0_keyhash"
+                                 },
+                                 {
+                                     "txid":  "9dbf7bd64893c3060007789e3c9cbb6c882b10b477c0aed05b7f958472d05152",
+                                     "vout":  0,
+                                     "height":  73,
+                                     "coinbase":  true,
+                                     "value":  5000000000,
+                                     "script":  "00145cb4f8304213f2205f1a469b0656d927dec0cc1c",
+                                     "type":  "witness_v0_keyhash"
+                                 },
+                                 {
+                                     "txid":  "dcc9b9613b4301279c79b6a3eadc516214c3d41d2f9f7ceedbb0fe4ff666db85",
+                                     "vout":  0,
+                                     "height":  74,
+                                     "coinbase":  true,
+                                     "value":  5000000000,
+                                     "script":  "00145cb4f8304213f2205f1a469b0656d927dec0cc1c",
+                                     "type":  "witness_v0_keyhash"
+                                 },
+                                 {
+                                     "txid":  "f56d3f8d2f57557b4086e1f97cc6c9d69468b88bb334608309c959dc35751bd4",
+                                     "vout":  0,
+                                     "height":  75,
+                                     "coinbase":  true,
+                                     "value":  5000000000,
+                                     "script":  "00145cb4f8304213f2205f1a469b0656d927dec0cc1c",
+                                     "type":  "witness_v0_keyhash"
+                                 },
+                                 {
+                                     "txid":  "fdef38597667892b6af31c5da5b8c20aa07017d12c54f4229e4c3bb191f0873f",
+                                     "vout":  0,
+                                     "height":  76,
+                                     "coinbase":  true,
+                                     "value":  5000000000,
+                                     "script":  "00145cb4f8304213f2205f1a469b0656d927dec0cc1c",
+                                     "type":  "witness_v0_keyhash"
+                                 },
+                                 {
+                                     "txid":  "f638ba94b77588bbcbc31801108c3a0b9a45e582656cfadb417090347ef22009",
+                                     "vout":  0,
+                                     "height":  77,
+                                     "coinbase":  true,
+                                     "value":  5000000000,
+                                     "script":  "00145cb4f8304213f2205f1a469b0656d927dec0cc1c",
+                                     "type":  "witness_v0_keyhash"
+                                 },
+                                 {
+                                     "txid":  "c1830181b68265130bc724aebd7745f3c7cc47af64e4db754f9bd13c8d72f36d",
+                                     "vout":  0,
+                                     "height":  78,
+                                     "coinbase":  true,
+                                     "value":  5000000000,
+                                     "script":  "00145cb4f8304213f2205f1a469b0656d927dec0cc1c",
+                                     "type":  "witness_v0_keyhash"
+                                 },
+                                 {
+                                     "txid":  "77d349c6bbdcf040a7365e456964295337b7c153e684f5ee451dfcb5c8fd6a76",
+                                     "vout":  0,
+                                     "height":  79,
+                                     "coinbase":  true,
+                                     "value":  5000000000,
+                                     "script":  "00145cb4f8304213f2205f1a469b0656d927dec0cc1c",
+                                     "type":  "witness_v0_keyhash"
+                                 },
+                                 {
+                                     "txid":  "72b763937f06afd3502a3f94914ed6e71cb1c4fcc26772bd53ad1063e5dda7c2",
+                                     "vout":  0,
+                                     "height":  80,
+                                     "coinbase":  true,
+                                     "value":  5000000000,
+                                     "script":  "00145cb4f8304213f2205f1a469b0656d927dec0cc1c",
+                                     "type":  "witness_v0_keyhash"
+                                 },
+                                 {
+                                     "txid":  "233b9e1fab6ff866a4daaa948332a540123d26c92fa698eb490614a53637d803",
+                                     "vout":  0,
+                                     "height":  81,
+                                     "coinbase":  true,
+                                     "value":  5000000000,
+                                     "script":  "00145cb4f8304213f2205f1a469b0656d927dec0cc1c",
+                                     "type":  "witness_v0_keyhash"
+                                 },
+                                 {
+                                     "txid":  "c76482a954602507e0a31318f1fe741f685b08eb000a7b72d94c41b015c7207c",
+                                     "vout":  0,
+                                     "height":  82,
+                                     "coinbase":  true,
+                                     "value":  5000000000,
+                                     "script":  "00145cb4f8304213f2205f1a469b0656d927dec0cc1c",
+                                     "type":  "witness_v0_keyhash"
+                                 },
+                                 {
+                                     "txid":  "f756d3986de541b5df147f7dd322658c9482d711dd5d0352d6f96b8e3e942f27",
+                                     "vout":  0,
+                                     "height":  83,
+                                     "coinbase":  true,
+                                     "value":  5000000000,
+                                     "script":  "00145cb4f8304213f2205f1a469b0656d927dec0cc1c",
+                                     "type":  "witness_v0_keyhash"
+                                 },
+                                 {
+                                     "txid":  "83ffdbfa8b6ec2dbfba4f9adc01f2511766e93cb2a7cbdbe65d4d6e315883322",
+                                     "vout":  0,
+                                     "height":  84,
+                                     "coinbase":  true,
+                                     "value":  5000000000,
+                                     "script":  "00145cb4f8304213f2205f1a469b0656d927dec0cc1c",
+                                     "type":  "witness_v0_keyhash"
+                                 },
+                                 {
+                                     "txid":  "859dda03206dcfb041f82452d59d71322cbd962963ba1667aa27d1e3c53efe0d",
+                                     "vout":  0,
+                                     "height":  85,
+                                     "coinbase":  true,
+                                     "value":  5000000000,
+                                     "script":  "00145cb4f8304213f2205f1a469b0656d927dec0cc1c",
+                                     "type":  "witness_v0_keyhash"
+                                 },
+                                 {
+                                     "txid":  "3b84aace3199a0c021232f7eb51d220081939482289442dd70958178a737beb2",
+                                     "vout":  0,
+                                     "height":  86,
+                                     "coinbase":  true,
+                                     "value":  5000000000,
+                                     "script":  "00145cb4f8304213f2205f1a469b0656d927dec0cc1c",
+                                     "type":  "witness_v0_keyhash"
+                                 },
+                                 {
+                                     "txid":  "71372e36eccab48584744394d9ef238fb9aa6c04b189bb1d0a9920af60613bf1",
+                                     "vout":  0,
+                                     "height":  87,
+                                     "coinbase":  true,
+                                     "value":  5000000000,
+                                     "script":  "00145cb4f8304213f2205f1a469b0656d927dec0cc1c",
+                                     "type":  "witness_v0_keyhash"
+                                 },
+                                 {
+                                     "txid":  "99fb1bba7b030d30d099464781c5576f01e940694c329986e2b83851031e5dce",
+                                     "vout":  0,
+                                     "height":  88,
+                                     "coinbase":  true,
+                                     "value":  5000000000,
+                                     "script":  "00145cb4f8304213f2205f1a469b0656d927dec0cc1c",
+                                     "type":  "witness_v0_keyhash"
+                                 },
+                                 {
+                                     "txid":  "c3e977b671db64c6154c544325ecc40776cea29e8dddde512ed51eff3254e730",
+                                     "vout":  0,
+                                     "height":  89,
+                                     "coinbase":  true,
+                                     "value":  5000000000,
+                                     "script":  "00145cb4f8304213f2205f1a469b0656d927dec0cc1c",
+                                     "type":  "witness_v0_keyhash"
+                                 },
+                                 {
+                                     "txid":  "187b130a2f2d1e9854be8be84ea465e8f721ed299e8a5f1e88869002e098fe14",
+                                     "vout":  0,
+                                     "height":  90,
+                                     "coinbase":  true,
+                                     "value":  5000000000,
+                                     "script":  "00145cb4f8304213f2205f1a469b0656d927dec0cc1c",
+                                     "type":  "witness_v0_keyhash"
+                                 },
+                                 {
+                                     "txid":  "2cb8b0d6cd3ac4d9f363f1eed734f673feed90777e4350c4dca6aa4bd7b91855",
+                                     "vout":  0,
+                                     "height":  91,
+                                     "coinbase":  true,
+                                     "value":  5000000000,
+                                     "script":  "00145cb4f8304213f2205f1a469b0656d927dec0cc1c",
+                                     "type":  "witness_v0_keyhash"
+                                 },
+                                 {
+                                     "txid":  "c6b013c889a0e86fcc020bd4c534a7d17f42c482e53c587bcd020858701dc104",
+                                     "vout":  0,
+                                     "height":  92,
+                                     "coinbase":  true,
+                                     "value":  5000000000,
+                                     "script":  "00145cb4f8304213f2205f1a469b0656d927dec0cc1c",
+                                     "type":  "witness_v0_keyhash"
+                                 },
+                                 {
+                                     "txid":  "703243ad60a13edba41d79768725e18c37ea953d0e25bb60051cc2a741345d9c",
+                                     "vout":  0,
+                                     "height":  93,
+                                     "coinbase":  true,
+                                     "value":  5000000000,
+                                     "script":  "00145cb4f8304213f2205f1a469b0656d927dec0cc1c",
+                                     "type":  "witness_v0_keyhash"
+                                 },
+                                 {
+                                     "txid":  "5c32e23197298a17238d8c7ef8416ccf54a38499996c943c972ce6f916ca18b0",
+                                     "vout":  0,
+                                     "height":  94,
+                                     "coinbase":  true,
+                                     "value":  5000000000,
+                                     "script":  "00145cb4f8304213f2205f1a469b0656d927dec0cc1c",
+                                     "type":  "witness_v0_keyhash"
+                                 },
+                                 {
+                                     "txid":  "870ccf145a271f547cb849932ec16f8f90e97bd8c9d119973b7108bfb9517e08",
+                                     "vout":  0,
+                                     "height":  95,
+                                     "coinbase":  true,
+                                     "value":  5000000000,
+                                     "script":  "00145cb4f8304213f2205f1a469b0656d927dec0cc1c",
+                                     "type":  "witness_v0_keyhash"
+                                 },
+                                 {
+                                     "txid":  "c090f938397ea22198b997311e9df2c1605775bc0475dbe263821a92ef0b149c",
+                                     "vout":  0,
+                                     "height":  96,
+                                     "coinbase":  true,
+                                     "value":  5000000000,
+                                     "script":  "00145cb4f8304213f2205f1a469b0656d927dec0cc1c",
+                                     "type":  "witness_v0_keyhash"
+                                 },
+                                 {
+                                     "txid":  "b0a7abd561843fa187e484c4f22ebf7f684c64311f4ef0a5470af8671ed8dbc2",
+                                     "vout":  0,
+                                     "height":  97,
+                                     "coinbase":  true,
+                                     "value":  5000000000,
+                                     "script":  "00145cb4f8304213f2205f1a469b0656d927dec0cc1c",
+                                     "type":  "witness_v0_keyhash"
+                                 },
+                                 {
+                                     "txid":  "b716254efeeb5594cf4ea9520b642d3fb7bdc4e17dfe779e3afd9ccaaef49a61",
+                                     "vout":  0,
+                                     "height":  98,
+                                     "coinbase":  true,
+                                     "value":  5000000000,
+                                     "script":  "00145cb4f8304213f2205f1a469b0656d927dec0cc1c",
+                                     "type":  "witness_v0_keyhash"
+                                 },
+                                 {
+                                     "txid":  "dba07ed4d6faf78b48ad88078d27ee07e024361a5b6b834362b411b5728e8bfe",
+                                     "vout":  0,
+                                     "height":  99,
+                                     "coinbase":  true,
+                                     "value":  5000000000,
+                                     "script":  "00145cb4f8304213f2205f1a469b0656d927dec0cc1c",
+                                     "type":  "witness_v0_keyhash"
+                                 },
+                                 {
+                                     "txid":  "72f24dad52cb59bc271d635dbd7da8254bf81226c81a6c21c664a665c2bf3016",
+                                     "vout":  0,
+                                     "height":  100,
+                                     "coinbase":  true,
+                                     "value":  5000000000,
+                                     "script":  "00145cb4f8304213f2205f1a469b0656d927dec0cc1c",
+                                     "type":  "witness_v0_keyhash"
+                                 },
+                                 {
+                                     "txid":  "74276d72f46064c94316afed2769ad0c0cab44fcd987c20816ef514cd6114d46",
+                                     "vout":  0,
+                                     "height":  101,
+                                     "coinbase":  true,
+                                     "value":  5000000000,
+                                     "script":  "00145cb4f8304213f2205f1a469b0656d927dec0cc1c",
+                                     "type":  "witness_v0_keyhash"
+                                 },
+                                 {
+                                     "txid":  "2a643e9a1026cfd4357735681069a57de339c0f2ae4d0fe0de68ea72810f6d15",
+                                     "vout":  0,
+                                     "height":  102,
+                                     "coinbase":  true,
+                                     "value":  5000011170,
+                                     "script":  "00145cb4f8304213f2205f1a469b0656d927dec0cc1c",
+                                     "type":  "witness_v0_keyhash"
+                                 },
+                                 {
+                                     "txid":  "77fe9455039557283266042793c65655f88262ecf13a6b77710d616e0d728c79",
+                                     "vout":  0,
+                                     "height":  102,
+                                     "coinbase":  false,
+                                     "value":  100000000,
+                                     "script":  "2102c9e90a332b530b40817274ea63e85f65b787abf7040b3093a772c387288a4954ac",
+                                     "type":  "pubkey"
+                                 },
+                                 {
+                                     "txid":  "77fe9455039557283266042793c65655f88262ecf13a6b77710d616e0d728c79",
+                                     "vout":  1,
+                                     "height":  102,
+                                     "coinbase":  false,
+                                     "value":  12345678,
+                                     "script":  "410479be667ef9dcbbac55a06295ce870b07029bfcdb2dce28d959f2815b16f81798483ada7726a3c4655da4fbfc0e1108a8fd17b448a68554199c47d08ffb10d4b8ac",
+                                     "type":  "pubkey"
+                                 },
+                                 {
+                                     "txid":  "77fe9455039557283266042793c65655f88262ecf13a6b77710d616e0d728c79",
+                                     "vout":  2,
+                                     "height":  102,
+                                     "coinbase":  false,
+                                     "value":  5000,
+                                     "script":  "410479be667ef9dcbbac55a06295ce870b07029bfcdb2dce28d959f2815b16f81798b7c52588d95c3b9aa25b0403f1eef75702e84bb7597aabe663b82f6f04ef2777ac",
+                                     "type":  "pubkey"
+                                 },
+                                 {
+                                     "txid":  "77fe9455039557283266042793c65655f88262ecf13a6b77710d616e0d728c79",
+                                     "vout":  3,
+                                     "height":  102,
+                                     "coinbase":  false,
+                                     "value":  6000,
+                                     "script":  "410400000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000ac",
+                                     "type":  "pubkey"
+                                 },
+                                 {
+                                     "txid":  "77fe9455039557283266042793c65655f88262ecf13a6b77710d616e0d728c79",
+                                     "vout":  4,
+                                     "height":  102,
+                                     "coinbase":  false,
+                                     "value":  7000,
+                                     "script":  "512102c9e90a332b530b40817274ea63e85f65b787abf7040b3093a772c387288a495451ae",
+                                     "type":  "multisig"
+                                 },
+                                 {
+                                     "txid":  "77fe9455039557283266042793c65655f88262ecf13a6b77710d616e0d728c79",
+                                     "vout":  5,
+                                     "height":  102,
+                                     "coinbase":  false,
+                                     "value":  8000,
+                                     "script":  "512102c9e90a332b530b40817274ea63e85f65b787abf7040b3093a772c387288a4954410479be667ef9dcbbac55a06295ce870b07029bfcdb2dce28d959f2815b16f81798483ada7726a3c4655da4fbfc0e1108a8fd17b448a68554199c47d08ffb10d4b852ae",
+                                     "type":  "multisig"
+                                 },
+                                 {
+                                     "txid":  "77fe9455039557283266042793c65655f88262ecf13a6b77710d616e0d728c79",
+                                     "vout":  6,
+                                     "height":  102,
+                                     "coinbase":  false,
+                                     "value":  9000,
+                                     "script":  "522102c9e90a332b530b40817274ea63e85f65b787abf7040b3093a772c387288a495421024eac64596b9ce415faedb3c1b0ce4debf6a519ea749af0da3eb073aedfe6a8a752ae",
+                                     "type":  "multisig"
+                                 },
+                                 {
+                                     "txid":  "77fe9455039557283266042793c65655f88262ecf13a6b77710d616e0d728c79",
+                                     "vout":  7,
+                                     "height":  102,
+                                     "coinbase":  false,
+                                     "value":  10000,
+                                     "script":  "522102c9e90a332b530b40817274ea63e85f65b787abf7040b3093a772c387288a495421024eac64596b9ce415faedb3c1b0ce4debf6a519ea749af0da3eb073aedfe6a8a72102037dfad1238e703784cd20fb149e03b8c573d869f2587c9b727b45900a79d13553ae",
+                                     "type":  "multisig"
+                                 },
+                                 {
+                                     "txid":  "77fe9455039557283266042793c65655f88262ecf13a6b77710d616e0d728c79",
+                                     "vout":  8,
+                                     "height":  102,
+                                     "coinbase":  false,
+                                     "value":  11000,
+                                     "script":  "532102c9e90a332b530b40817274ea63e85f65b787abf7040b3093a772c387288a495421024eac64596b9ce415faedb3c1b0ce4debf6a519ea749af0da3eb073aedfe6a8a72102037dfad1238e703784cd20fb149e03b8c573d869f2587c9b727b45900a79d13553ae",
+                                     "type":  "multisig"
+                                 },
+                                 {
+                                     "txid":  "77fe9455039557283266042793c65655f88262ecf13a6b77710d616e0d728c79",
+                                     "vout":  9,
+                                     "height":  102,
+                                     "coinbase":  false,
+                                     "value":  2100000000,
+                                     "script":  "5120ff4ff54057b7f96f7f1803f43e6eadb0d10f672d942ca16ea9c3f0aef5c66c25",
+                                     "type":  "witness_v1_taproot"
+                                 },
+                                 {
+                                     "txid":  "77fe9455039557283266042793c65655f88262ecf13a6b77710d616e0d728c79",
+                                     "vout":  10,
+                                     "height":  102,
+                                     "coinbase":  false,
+                                     "value":  546,
+                                     "script":  "51203efa3231d032163984be7b8b5d0c9f5d2ab3ac7963f795f43067abe349a3c49f",
+                                     "type":  "witness_v1_taproot"
+                                 },
+                                 {
+                                     "txid":  "77fe9455039557283266042793c65655f88262ecf13a6b77710d616e0d728c79",
+                                     "vout":  11,
+                                     "height":  102,
+                                     "coinbase":  false,
+                                     "value":  545,
+                                     "script":  "512041f0ba7a2d440008113cff4be8267c2e61973d3d2482f74ff401a195d836e295",
+                                     "type":  "witness_v1_taproot"
+                                 },
+                                 {
+                                     "txid":  "77fe9455039557283266042793c65655f88262ecf13a6b77710d616e0d728c79",
+                                     "vout":  12,
+                                     "height":  102,
+                                     "coinbase":  false,
+                                     "value":  300000,
+                                     "script":  "76a914c42550f9fe1720c66a02844cce608e659f363c9188ac",
+                                     "type":  "pubkeyhash"
+                                 },
+                                 {
+                                     "txid":  "77fe9455039557283266042793c65655f88262ecf13a6b77710d616e0d728c79",
+                                     "vout":  13,
+                                     "height":  102,
+                                     "coinbase":  false,
+                                     "value":  400000,
+                                     "script":  "0014f3f18517f2ca1f88465ac1dcd0153fbd2db60761",
+                                     "type":  "witness_v0_keyhash"
+                                 },
+                                 {
+                                     "txid":  "77fe9455039557283266042793c65655f88262ecf13a6b77710d616e0d728c79",
+                                     "vout":  14,
+                                     "height":  102,
+                                     "coinbase":  false,
+                                     "value":  2785786061,
+                                     "script":  "0014bb906c8431af43f6850359a7c5c84853ae1af46d",
+                                     "type":  "witness_v0_keyhash"
+                                 },
+                                 {
+                                     "txid":  "77fe9455039557283266042793c65655f88262ecf13a6b77710d616e0d728c79",
+                                     "vout":  15,
+                                     "height":  102,
+                                     "coinbase":  false,
+                                     "value":  500000,
+                                     "script":  "a914111111111111111111111111111111111111111187",
+                                     "type":  "scripthash"
+                                 },
+                                 {
+                                     "txid":  "77fe9455039557283266042793c65655f88262ecf13a6b77710d616e0d728c79",
+                                     "vout":  16,
+                                     "height":  102,
+                                     "coinbase":  false,
+                                     "value":  600000,
+                                     "script":  "00204ae81572f06e1b88fd5ced7a1a000945432e83e1551e6f721ee9c00b8cc33260",
+                                     "type":  "witness_v0_scripthash"
+                                 }
+                             ]
+               },
+    "core_version":  "Satoshi:31.1.0",
+    "recorded_by":  "scripts/record-snapshot-fixture.ps1"
+}
