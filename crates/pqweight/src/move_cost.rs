@@ -2,8 +2,19 @@
 //! with today's signatures into PQ outputs (ticket 22). The layouts are the
 //! stated assumptions in `docs/migration-templates.md`, "Move layouts".
 
-use crate::migration::{MultisigThreshold, bare_multisig_threshold};
+use crate::migration::{MultisigThreshold, bare_multisig_threshold, compact_size_len};
 use crate::snapshot::{Coin, CoinScript};
+
+/// Stated assumptions of every Move cost result (`docs/migration-templates.md`,
+/// "Move layouts").
+pub const MOVE_COST_ASSUMPTIONS: [&str; 6] = [
+    "coins move before any soft fork disables ECDSA or Schnorr signatures, spent with today's signatures",
+    "each signature is a 72-byte DER ECDSA signature, or a 64-byte Schnorr signature for P2TR",
+    "P2TR coins move by key path; script-path-only coins cost more, so for them this is a lower bound",
+    "each move pays into a BIP-360 style PQ output of 43 bytes (172 WU)",
+    "floor: perfect consolidation (spend weights only); ceiling: one coin per transaction, 1 input and 1 output",
+    "blocks hold nothing but moves; coins exposed only by address reuse are not counted, so every number is a lower bound",
+];
 
 /// Consensus limit on a block's weight, the unit "blocks" are counted in.
 const MAX_BLOCK_WEIGHT: u64 = 4_000_000;
@@ -79,15 +90,6 @@ impl ExposedType {
 /// `51 20 <32 bytes>`: a segwit v1 output with a 32-byte program.
 fn is_p2tr(script: &[u8]) -> bool {
     script.len() == 34 && script[0] == 0x51 && script[1] == 0x20
-}
-
-fn compact_size_len(value: u64) -> u64 {
-    match value {
-        0..=252 => 1,
-        253..=0xffff => 3,
-        0x1_0000..=0xffff_ffff => 5,
-        _ => 9,
-    }
 }
 
 /// Coins, their value and the Move cost of a set of Exposed coins.

@@ -20,7 +20,7 @@ Bitcoin Core's reported `weight` and `vsize` for a transaction, the independent 
 _Avoid_: Reference implementation, ground truth
 
 **Fixture**:
-A raw transaction committed to the repo together with its Oracle values and the script that recorded them.
+A raw transaction committed to the repo together with its Oracle values and the script that recorded them. The snapshot Fixture is the same idea for a whole UTXO snapshot: a regtest `dumptxoutset` file plus Core's view of every coin in it.
 _Avoid_: Test data, sample
 
 **Second calculation**:

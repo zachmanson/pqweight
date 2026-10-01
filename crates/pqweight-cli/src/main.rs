@@ -4,8 +4,9 @@ use std::process::ExitCode;
 
 use pqweight::{
     AggregateResult, BaselineSpendType, BreakdownKind, BreakdownRow, ExposedType, ExposureRow,
-    FeeRate, InputResult, KeyExposure, Migration, MoveCost, MoveCostTotals, MultisigThreshold,
-    ParameterSet, SnapshotHeader, TransactionWeight, UnmappedReason, aggregate, fee, read_snapshot,
+    FeeRate, InputResult, KeyExposure, MOVE_COST_ASSUMPTIONS, Migration, MoveCost, MoveCostRow,
+    MoveCostTotals, MultisigThreshold, ParameterSet, SnapshotHeader, TransactionWeight,
+    UnmappedReason, aggregate, fee, read_snapshot,
 };
 
 fn main() -> ExitCode {
@@ -169,17 +170,6 @@ fn run_aggregate(args: &[String]) -> Result<String, String> {
     }
 }
 
-/// Stated assumptions of every Move cost result (`docs/migration-templates.md`,
-/// "Move layouts").
-const MOVE_COST_ASSUMPTIONS: [&str; 6] = [
-    "coins move before any soft fork disables ECDSA or Schnorr signatures, spent with today's signatures",
-    "each signature is a 72-byte DER ECDSA signature, or a 64-byte Schnorr signature for P2TR",
-    "P2TR coins move by key path; script-path-only coins cost more, so for them this is a lower bound",
-    "each move pays into a BIP-360 style PQ output of 43 bytes (172 WU)",
-    "floor: perfect consolidation (spend weights only); ceiling: one coin per transaction, 1 input and 1 output",
-    "blocks hold nothing but moves; coins exposed only by address reuse are not counted, so every number is a lower bound",
-];
-
 fn run_move_cost(args: &[String]) -> Result<String, String> {
     let json = args.iter().any(|arg| arg == "--json");
     let positional: Vec<&String> = args.iter().filter(|arg| *arg != "--json").collect();
@@ -314,25 +304,25 @@ fn move_cost_human(header: &SnapshotHeader, cost: &MoveCost) -> String {
         )
     };
     let (all, above_dust) = cost.total();
-    for (heading, total, pick) in [
-        (
-            "all Exposed coins (coins, BTC, floor WU, floor blocks, ceiling WU, ceiling blocks):",
-            all,
-            (|row| row.all) as fn(&pqweight::MoveCostRow) -> MoveCostTotals,
-        ),
-        ("coins of at least 546 sats:", above_dust, |row| {
-            row.above_dust
-        }),
-    ] {
-        lines.push(heading.to_string());
-        if cost.rows.is_empty() {
-            lines.push("  (none)".to_string());
-        }
-        for row in &cost.rows {
-            lines.push(line(&exposed_type_label(row.exposed_type), &pick(row)));
-        }
-        lines.push(line("total", &total));
-    }
+    let mut section =
+        |heading: &str, total: &MoveCostTotals, pick: fn(&MoveCostRow) -> MoveCostTotals| {
+            lines.push(heading.to_string());
+            if cost.rows.is_empty() {
+                lines.push("  (none)".to_string());
+            }
+            for row in &cost.rows {
+                lines.push(line(&exposed_type_label(row.exposed_type), &pick(row)));
+            }
+            lines.push(line("total", total));
+        };
+    section(
+        "all Exposed coins (coins, BTC, floor WU, floor blocks, ceiling WU, ceiling blocks):",
+        &all,
+        |row| row.all,
+    );
+    section("coins of at least 546 sats:", &above_dust, |row| {
+        row.above_dust
+    });
     lines.push("assumptions:".to_string());
     for assumption in MOVE_COST_ASSUMPTIONS {
         lines.push(format!("- {assumption}"));

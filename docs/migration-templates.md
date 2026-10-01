@@ -126,7 +126,7 @@ Read from the coin's scriptPubKey as the UTXO snapshot stores it:
 
 - **P2PK compressed**: `21 <33-byte key> ac` (snapshot compressed-script codes 2 and 3).
 - **P2PK uncompressed**: `41 04 <64 bytes> ac` with a valid key (codes 4 and 5). A P2PK script whose key is not on the curve is stored raw by Core and is not counted: nobody can spend it, so nothing can move it or steal it. Hybrid-encoded keys (prefix `06` or `07`) are also stored raw and not counted; they are rare enough not to matter, and leaving them out keeps the result a lower bound.
-- **Bare multisig m-of-n**: exactly `OP_m <n keys> OP_n OP_CHECKMULTISIG`, 1 ≤ m ≤ n ≤ 20, every key a direct push of 33 or 65 bytes, as the P2SH multisig template reads its script. One row per threshold.
+- **Bare multisig m-of-n**: exactly `OP_m <n keys> OP_n OP_CHECKMULTISIG`, 1 ≤ m ≤ n ≤ 20, every key a direct push of 33 or 65 bytes, as the P2SH multisig template reads its script. One row per threshold. Only lengths are checked, so a key with a hybrid prefix is counted here, unlike in P2PK.
 - **P2TR**: exactly `51 20 <32 bytes>`.
 
 Every other coin is not an Exposed coin, including P2PKH, P2SH, P2WPKH and P2WSH whose key was revealed by address reuse (the snapshot can't show reuse, so Move cost is a lower bound).
@@ -151,7 +151,7 @@ A BIP-360 style output: 8-byte value, 1-byte script length, 34-byte scriptPubKey
 
 ### Floor and ceiling
 
-- **Floor** (perfect consolidation): the sum of the coins' spend weights. Transaction overhead and outputs are shared by so many coins that they round to nothing.
+- **Floor** (perfect consolidation): the sum of the coins' spend weights. Transaction overhead and outputs are shared by so many coins that they round to nothing. Each kind is assumed to be swept on its own, so a P2PK or bare multisig input never pays the 1-byte empty witness it would need in a transaction that also spends P2TR.
 - **Ceiling** (one coin per transaction, 1 input, 1 output): spend weight + 40 (version 4, input count 1, output count 1, locktime 4 bytes, at 4 WU each) + 172 (the PQ output), + 2 for a P2TR coin (the segwit marker and flag at 1 WU each).
 
 So the ceiling is 668 per P2PK coin, 672 for bare multisig 1-of-n, 964 for 2-of-n, 1,256 for 3-of-n, and 444 per P2TR coin.

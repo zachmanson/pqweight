@@ -1162,7 +1162,7 @@ fn witness_size(witness: &[&[u8]]) -> u64 {
     compact_size_len(witness.len() as u64) + items.sum::<u64>()
 }
 
-fn compact_size_len(value: u64) -> u64 {
+pub(crate) fn compact_size_len(value: u64) -> u64 {
     match value {
         0..=0xfc => 1,
         0xfd..=0xffff => 3,

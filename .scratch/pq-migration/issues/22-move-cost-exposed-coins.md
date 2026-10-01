@@ -1,4 +1,4 @@
-Status: ready-for-agent
+Status: done
 
 # Move cost of Exposed coins
 
@@ -41,3 +41,9 @@ Ticket 11 (wontfix 2026-09-28): the P2PK template was reframed as this question 
 2. Move-cost arithmetic + move layouts in `docs/migration-templates.md` + Second calculation extended to them.
 3. `pqweight move-cost` CLI, text and `--json`.
 4. Download the 935k snapshot, verify with `loadtxoutset`, run it, write `docs/move-cost/935k-snapshot.md`.
+
+**2026-09-30, slices 1-3 done (c108df9, 13afd8b + review fixes).** Slice 4 (mainnet run and report) split into ticket 23 by the user's decision, so this ticket closes on the tool.
+
+- `read_snapshot` (`src/snapshot.rs`) streams coins; snapshot Fixture `tests/fixtures/snapshot/regtest-utxo.{dat,json}` (118 coins, Oracle = `gettxoutsetinfo` + `gettxout` for every coin), recorded by `scripts/record-snapshot-fixture.ps1` (needs `-permitbaremultisig=1`: off by default since Core v28).
+- `move_cost` / `MoveCost::add` (`src/move_cost.rs`); bare multisig gets one row per threshold. Layouts in `docs/migration-templates.md` "Move layouts"; Second calculation checks them on the snapshot Fixture in `--fixtures` mode (no CI change needed).
+- Decisions made while implementing: raw-stored P2PK (key not on the curve, or hybrid `06`/`07` prefix) is not counted; P2TR ceiling includes the 2 WU marker and flag; blocks are reported as a decimal (weight ÷ 4,000,000); `--json` values are sats; the CLI also reports scanned totals and a total row.

@@ -148,7 +148,7 @@ pqweight aggregate --scheme ml-dsa-44 --json sample.txt | jq '.breakdown[] | sel
 
 ### Move cost of Exposed coins (a UTXO snapshot)
 
-`move-cost` reads a Bitcoin Core UTXO snapshot (the file `dumptxoutset` writes and `loadtxoutset` reads; see ADR 0003) one coin at a time, finds every **Exposed coin** (P2PK, bare multisig, P2TR: the key sits in the output itself) and reports how much weight it would take to move them into PQ outputs with today's signatures. Each row gives a floor (perfect consolidation) and a ceiling (one coin per transaction), in WU and in full blocks, once for all coins and once for coins of at least 546 sats. The layouts are in [docs/migration-templates.md](docs/migration-templates.md), "Move layouts".
+`move-cost` reads a Bitcoin Core UTXO snapshot (the file `dumptxoutset` writes and `loadtxoutset` reads; see ADR 0003) one coin at a time, finds every **Exposed coin** (P2PK, bare multisig, P2TR: the key sits in the output itself) and reports how much weight it would take to move them into PQ outputs with today's signatures. Each row gives a floor (perfect consolidation) and a ceiling (one coin per transaction), in WU and in full blocks, once for all coins and once for coins of at least 546 sats. In `--json`, every `value` is in satoshis. The layouts are in [docs/migration-templates.md](docs/migration-templates.md), "Move layouts".
 
 ```sh
 pqweight move-cost crates/pqweight/tests/fixtures/snapshot/regtest-utxo.dat

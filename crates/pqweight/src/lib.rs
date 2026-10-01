@@ -16,7 +16,9 @@ pub use migration::{
     BaselineSpendType, InputResult, KeyExposure, Migration, MultisigThreshold, ParameterSet,
     UnmappedReason, migrate,
 };
-pub use move_cost::{ExposedType, MoveCost, MoveCostRow, MoveCostTotals, move_cost};
+pub use move_cost::{
+    ExposedType, MOVE_COST_ASSUMPTIONS, MoveCost, MoveCostRow, MoveCostTotals, move_cost,
+};
 pub use parser::ParseError;
 pub use snapshot::{Coin, CoinScript, Snapshot, SnapshotError, SnapshotHeader, read_snapshot};
 
