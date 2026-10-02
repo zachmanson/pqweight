@@ -3,10 +3,11 @@ use std::io::Read;
 use std::process::ExitCode;
 
 use pqweight::{
-    AggregateResult, BaselineSpendType, BreakdownKind, BreakdownRow, ExposedType, ExposureRow,
-    FeeRate, InputResult, KeyExposure, MOVE_COST_ASSUMPTIONS, Migration, MoveCost, MoveCostRow,
-    MoveCostTotals, MultisigThreshold, ParameterSet, SnapshotHeader, TransactionWeight,
-    UnmappedReason, aggregate, fee, read_snapshot,
+    AggregateResult, BaselineSpendType, BlockRow, BreakdownKind, BreakdownRow, ExposedType,
+    ExposureRow, FeeRate, Hash256, InputResult, KeyExposure, MAX_BLOCK_WEIGHT,
+    MOVE_COST_ASSUMPTIONS, Migration, MoveCost, MoveCostRow, MoveCostTotals, MultisigThreshold,
+    ParameterSet, SnapshotHeader, TransactionWeight, UnmappedReason, aggregate, aggregate_blocks,
+    fee, read_snapshot,
 };
 
 fn main() -> ExitCode {
@@ -29,11 +30,12 @@ fn run(args: &[String]) -> Result<String, String> {
         Some("migrate") => run_migrate(&args[1..]),
         Some("aggregate") => run_aggregate(&args[1..]),
         Some("move-cost") => run_move_cost(&args[1..]),
+        Some("split-blocks") => run_split_blocks(&args[1..]),
         _ => Err(USAGE.to_string()),
     }
 }
 
-const USAGE: &str = "usage: pqweight weight [--json] [<hex>]\n       pqweight migrate --scheme <scheme> [--fee-rate <rate>] [--json] [<hex>]\n       pqweight migrate --scheme <scheme> [--fee-rate <rate>] --json-lines [<path>]\n       pqweight aggregate --scheme <scheme> [--fee-rate <rate>] [--json] [<path>]\n       pqweight move-cost [--json] <snapshot>";
+const USAGE: &str = "usage: pqweight weight [--json] [<hex>]\n       pqweight migrate --scheme <scheme> [--fee-rate <rate>] [--json] [<hex>]\n       pqweight migrate --scheme <scheme> [--fee-rate <rate>] --json-lines [<path>]\n       pqweight aggregate --scheme <scheme> [--fee-rate <rate>] [--json] [--blocks] [<path>]\n       pqweight move-cost [--json] <snapshot>\n       pqweight split-blocks [<path>]";
 
 fn run_weight(args: &[String]) -> Result<String, String> {
     let json = args.iter().any(|arg| arg == "--json");
@@ -153,21 +155,50 @@ fn migrate_one(
 
 fn run_aggregate(args: &[String]) -> Result<String, String> {
     let json = args.iter().any(|arg| arg == "--json");
+    let blocks = args.iter().any(|arg| arg == "--blocks");
     let args: Vec<String> = args
         .iter()
-        .filter(|arg| *arg != "--json")
+        .filter(|arg| *arg != "--json" && *arg != "--blocks")
         .cloned()
         .collect();
     let (parameter_set, fee_rate, positional) = parse_scheme_and_fee_rate_args(&args)?;
 
     let text = read_path_or_stdin(&positional)?;
 
-    let result = aggregate(text.lines().map(str::to_string), parameter_set, fee_rate);
-    if json {
-        Ok(aggregate_json(&result, parameter_set, fee_rate))
+    let lines = text.lines().map(str::to_string);
+    let result = if blocks {
+        aggregate_blocks(lines, parameter_set, fee_rate)
     } else {
-        Ok(aggregate_human(&result))
+        aggregate(lines, parameter_set, fee_rate)
+    };
+    if json {
+        Ok(aggregate_json(&result, parameter_set, fee_rate, blocks))
+    } else {
+        Ok(aggregate_human(&result, blocks))
     }
+}
+
+/// One raw block per line in, verified by `parse_block`; one transaction hex
+/// per line out, the input `aggregate` and the Python scripts take. Each
+/// block's hash and transaction count go to stderr. A block that fails stops
+/// the command before anything is printed, so nothing downstream reads a
+/// sample with a block quietly missing.
+fn run_split_blocks(args: &[String]) -> Result<String, String> {
+    let positional: Vec<&str> = args.iter().map(String::as_str).collect();
+    let text = read_path_or_stdin(&positional)?;
+    let mut transactions = Vec::new();
+    for (index, line) in text.lines().enumerate() {
+        let hex = line.trim();
+        if hex.is_empty() {
+            continue;
+        }
+        let block = decode_hex(hex)
+            .and_then(|bytes| pqweight::parse_block(&bytes).map_err(|err| err.to_string()))
+            .map_err(|message| format!("line {}: {message}", index + 1))?;
+        eprintln!("{}: {} transactions", block.hash, block.transactions.len());
+        transactions.extend(block.transactions.iter().map(|tx| to_hex(tx)));
+    }
+    Ok(transactions.join("\n"))
 }
 
 fn run_move_cost(args: &[String]) -> Result<String, String> {
@@ -190,9 +221,8 @@ fn run_move_cost(args: &[String]) -> Result<String, String> {
     }
 }
 
-/// A hash as Core displays it: the serialized bytes reversed, in hex.
-fn display_hash(hash: &[u8; 32]) -> String {
-    hash.iter().rev().fold(String::new(), |mut hex, byte| {
+fn to_hex(bytes: &[u8]) -> String {
+    bytes.iter().fold(String::new(), |mut hex, byte| {
         // Writing to a String never fails.
         let _ = write!(hex, "{byte:02x}");
         hex
@@ -262,7 +292,7 @@ fn move_cost_json(header: &SnapshotHeader, cost: &MoveCost) -> String {
         .collect();
     format!(
         r#"{{"snapshot":{{"base_block_hash":"{}","coins":{}}},"scanned":{{"coins":{},"value":{}}},"rows":[{}],"total":{{"all":{},"above_dust":{}}},"assumptions":[{}]}}"#,
-        display_hash(&header.base_block_hash),
+        Hash256(header.base_block_hash),
         header.coins_count,
         cost.scanned_coins,
         cost.scanned_value,
@@ -275,10 +305,7 @@ fn move_cost_json(header: &SnapshotHeader, cost: &MoveCost) -> String {
 
 fn move_cost_human(header: &SnapshotHeader, cost: &MoveCost) -> String {
     let mut lines = vec![
-        format!(
-            "snapshot base block: {}",
-            display_hash(&header.base_block_hash)
-        ),
+        format!("snapshot base block: {}", Hash256(header.base_block_hash)),
         format!(
             "coins scanned: {} ({} BTC)",
             cost.scanned_coins,
@@ -336,6 +363,7 @@ fn aggregate_json(
     result: &AggregateResult,
     parameter_set: ParameterSet,
     fee_rate: Option<FeeRate>,
+    blocks: bool,
 ) -> String {
     let totals = |weight: u64, vsize: u64| format!(r#"{{"weight":{weight},"vsize":{vsize}}}"#);
     let counts = &result.counts;
@@ -383,8 +411,14 @@ fn aggregate_json(
             )
         })
         .collect();
+    let blocks_field = if blocks {
+        let rows: Vec<String> = result.blocks.iter().map(block_row_json).collect();
+        format!(r#","blocks":[{}]"#, rows.join(","))
+    } else {
+        String::new()
+    };
     format!(
-        r#"{{"scheme":"{}","fee_rate":{},"counts":{{"parsed":{},"fully_mapped":{},"partially_mapped":{},"unmapped_inputs":{},"parse_errors":{}}},"baseline":{},"migrated":{migrated},"partially_mapped":{}{fee_field},"breakdown":[{}],"key_exposure":[{}],"errors":[{}]}}"#,
+        r#"{{"scheme":"{}","fee_rate":{},"counts":{{"parsed":{},"fully_mapped":{},"partially_mapped":{},"unmapped_inputs":{},"parse_errors":{}}},"baseline":{},"migrated":{migrated},"partially_mapped":{}{fee_field},"breakdown":[{}],"key_exposure":[{}]{blocks_field},"errors":[{}]}}"#,
         scheme_name(parameter_set),
         fee_rate.map_or_else(|| "null".to_string(), |rate| rate.to_string()),
         counts.parsed,
@@ -401,6 +435,68 @@ fn aggregate_json(
         exposure.join(","),
         errors.join(","),
     )
+}
+
+/// `weight` as an exact decimal multiple of [`MAX_BLOCK_WEIGHT`]: weight x 25
+/// / 10^8, so at most 8 decimal places and no float rounding.
+fn limit_multiple(weight: u64) -> String {
+    let scaled = weight * 25;
+    let fraction = format!("{:08}", scaled % 100_000_000);
+    let fraction = fraction.trim_end_matches('0');
+    if fraction.is_empty() {
+        (scaled / 100_000_000).to_string()
+    } else {
+        format!("{}.{fraction}", scaled / 100_000_000)
+    }
+}
+
+/// `weight` as a multiple of [`MAX_BLOCK_WEIGHT`] to one decimal place,
+/// rounded half up, such as `x7.9`.
+fn limit_multiple_label(weight: u64) -> String {
+    let tenths = (weight * 10 + MAX_BLOCK_WEIGHT / 2) / MAX_BLOCK_WEIGHT;
+    format!("x{}.{}", tenths / 10, tenths % 10)
+}
+
+/// One `aggregate --blocks --json` block row.
+fn block_row_json(row: &BlockRow) -> String {
+    let null = || "null".to_string();
+    format!(
+        r#"{{"hash":"{}","transactions":{},"weight":{},"migrated_weight":{},"migrated_limit_multiple":{},"partially_mapped":{}}}"#,
+        row.hash,
+        row.transactions,
+        row.weight,
+        row.migrated_weight
+            .map_or_else(null, |weight| weight.to_string()),
+        row.migrated_weight.map_or_else(null, limit_multiple),
+        row.partially_mapped,
+    )
+}
+
+/// The `aggregate --blocks` table: one row per block, then what a migrated
+/// weight over the limit means.
+fn blocks_table(blocks: &[BlockRow]) -> Vec<String> {
+    let mut lines = vec![
+        "blocks (transactions, Block weight, migrated Block weight, x the 4,000,000 WU limit):"
+            .to_string(),
+    ];
+    if blocks.is_empty() {
+        lines.push("  (none)".to_string());
+    }
+    for row in blocks {
+        let migrated = match row.migrated_weight {
+            Some(weight) => format!("{:>9}  {}", weight, limit_multiple_label(weight)),
+            None => format!("{:>9}  ({} partially mapped)", "-", row.partially_mapped),
+        };
+        lines.push(format!(
+            "  {}  {:>6}  {:>9}  {migrated}",
+            row.hash, row.transactions, row.weight
+        ));
+    }
+    lines.push(
+        "over the limit means these transactions wouldn't fit in one block, not that the block is invalid; \"-\" means a partially mapped transaction leaves the block without a migrated weight"
+            .to_string(),
+    );
+    lines
 }
 
 /// One breakdown row as JSON, named the way `migrate --json` names its inputs.
@@ -448,7 +544,7 @@ fn sorted_breakdown(breakdown: &[BreakdownRow]) -> Vec<&BreakdownRow> {
     mapped
 }
 
-fn aggregate_human(result: &AggregateResult) -> String {
+fn aggregate_human(result: &AggregateResult, blocks: bool) -> String {
     let mut lines = vec![
         format!("transactions parsed: {}", result.counts.parsed),
         format!("fully mapped: {}", result.counts.fully_mapped),
@@ -483,6 +579,9 @@ fn aggregate_human(result: &AggregateResult) -> String {
     ));
     lines.extend(breakdown_table(&result.breakdown));
     lines.extend(exposure_table(&result.exposure));
+    if blocks {
+        lines.extend(blocks_table(&result.blocks));
+    }
     if !result.errors.is_empty() {
         lines.push("errors:".to_string());
         for error in &result.errors {
@@ -862,4 +961,29 @@ fn decode_hex(hex: &str) -> Result<Vec<u8>, String> {
                 .ok_or_else(|| format!("invalid hex at position {i}"))
         })
         .collect()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{limit_multiple, limit_multiple_label};
+
+    #[test]
+    fn limit_multiple_is_the_exact_decimal_without_trailing_zeros() {
+        assert_eq!(limit_multiple(4_000_000), "1");
+        assert_eq!(limit_multiple(6_000_000), "1.5");
+        // 1 WU is 25 / 10^8 of the limit: the smallest step, 8 places.
+        assert_eq!(limit_multiple(1), "0.00000025");
+        // 32,781,178 x 25 = 819,529,450.
+        assert_eq!(limit_multiple(32_781_178), "8.1952945");
+    }
+
+    #[test]
+    fn limit_multiple_label_rounds_half_up_to_one_place() {
+        assert_eq!(limit_multiple_label(0), "x0.0");
+        // 32,781,178 / 4,000,000 = 8.195...
+        assert_eq!(limit_multiple_label(32_781_178), "x8.2");
+        // 3,799,999 is just under 0.95: rounds down. 3,800,000 is exactly 0.95: up.
+        assert_eq!(limit_multiple_label(3_799_999), "x0.9");
+        assert_eq!(limit_multiple_label(3_800_000), "x1.0");
+    }
 }

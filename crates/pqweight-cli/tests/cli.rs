@@ -3,6 +3,7 @@
 //! what only the CLI decides: output formats and the order of report rows. Weight
 //! correctness is covered by the library's Fixture test.
 
+use std::fmt::Write as _;
 use std::io::Write;
 use std::path::PathBuf;
 use std::process::{Command, Output, Stdio};
@@ -985,4 +986,154 @@ fn move_cost_without_a_path_prints_usage() {
         "{}",
         stderr(&output)
     );
+}
+
+/// A block Fixture's hex and its known hash.
+fn block_fixture(name: &str) -> (String, String) {
+    let dir = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../pqweight/tests/fixtures/block");
+    let hex = std::fs::read_to_string(dir.join(format!("{name}.hex"))).unwrap();
+    let meta: serde_json::Value =
+        serde_json::from_str(&std::fs::read_to_string(dir.join(format!("{name}.json"))).unwrap())
+            .unwrap();
+    (
+        hex.trim().to_string(),
+        meta["oracle"]["hash"].as_str().unwrap().to_string(),
+    )
+}
+
+#[test]
+fn aggregate_blocks_prints_a_row_per_block_and_what_over_the_limit_means() {
+    let (regtest, regtest_hash) = block_fixture("regtest-block");
+    let (block_170, block_170_hash) = block_fixture("block-170");
+
+    let output = run(
+        &["aggregate", "--scheme", "ml-dsa-44", "--blocks"],
+        Some(&format!("{regtest}\n{block_170}\n")),
+    );
+
+    assert!(output.status.success(), "{}", stderr(&output));
+    let text = stdout(&output);
+    assert!(text.contains("transactions parsed: 5"), "{text}");
+    let regtest_row = row_after(&text, &regtest_hash);
+    assert_eq!(regtest_row[0], "3", "{text}");
+    assert!(regtest_row[3].starts_with('x'), "{text}");
+    // Block 170's P2PK spend is Unmapped: no migrated weight, and the count.
+    let block_170_row = row_after(&text, &block_170_hash);
+    assert_eq!(block_170_row[..3], ["2", "1960", "-"], "{text}");
+    assert!(text.contains("1 partially mapped"), "{text}");
+    assert!(text.contains("wouldn't fit in one block"), "{text}");
+}
+
+#[test]
+fn aggregate_blocks_json_has_a_row_per_block() {
+    let (regtest, regtest_hash) = block_fixture("regtest-block");
+    let (block_170, block_170_hash) = block_fixture("block-170");
+
+    let json = aggregate_json(&["--blocks"], &format!("{regtest}\n{block_170}\n"));
+
+    let blocks = json["blocks"].as_array().unwrap();
+    assert_eq!(blocks.len(), 2);
+    assert_eq!(blocks[0]["hash"], regtest_hash.as_str());
+    assert_eq!(blocks[0]["transactions"], 3);
+    assert_eq!(blocks[0]["partially_mapped"], 0);
+    let migrated = blocks[0]["migrated_weight"].as_u64().unwrap();
+    let multiple = blocks[0]["migrated_limit_multiple"].as_f64().unwrap();
+    let migrated = f64::from(u32::try_from(migrated).unwrap());
+    assert!((multiple * 4_000_000.0 - migrated).abs() < 1e-6);
+    assert_eq!(blocks[1]["hash"], block_170_hash.as_str());
+    assert_eq!(blocks[1]["weight"], 1960);
+    assert_eq!(blocks[1]["migrated_weight"], serde_json::Value::Null);
+    assert_eq!(
+        blocks[1]["migrated_limit_multiple"],
+        serde_json::Value::Null
+    );
+    assert_eq!(blocks[1]["partially_mapped"], 1);
+}
+
+#[test]
+fn aggregate_without_blocks_has_no_block_rows() {
+    let json = aggregate_json(&[], &format!("{}\n", p2wpkh_fixture().hex));
+
+    assert!(json.get("blocks").is_none(), "{json}");
+}
+
+#[test]
+fn split_blocks_prints_each_transaction_and_each_block_hash_on_stderr() {
+    let (regtest, regtest_hash) = block_fixture("regtest-block");
+    let (block_170, block_170_hash) = block_fixture("block-170");
+
+    let output = run(
+        &["split-blocks"],
+        Some(&format!("{regtest}\n\n{block_170}\n")),
+    );
+
+    assert!(output.status.success(), "{}", stderr(&output));
+    let text = stdout(&output);
+    let lines: Vec<&str> = text.lines().collect();
+    // Every transaction of both blocks, in block order (the library's own
+    // tests check `parse_block`'s split against Core and rust-bitcoin).
+    let expected: Vec<String> = [&regtest, &block_170]
+        .iter()
+        .flat_map(|hex| {
+            let bytes = (0..hex.len())
+                .step_by(2)
+                .map(|i| u8::from_str_radix(&hex[i..i + 2], 16).unwrap())
+                .collect::<Vec<u8>>();
+            pqweight::parse_block(&bytes).unwrap().transactions
+        })
+        .map(|tx| {
+            tx.iter().fold(String::new(), |mut hex, byte| {
+                let _ = write!(hex, "{byte:02x}");
+                hex
+            })
+        })
+        .collect();
+    assert_eq!(lines, expected, "{text}");
+    // Block 170's second transaction is the p2pk Fixture (Satoshi to Hal Finney).
+    assert_eq!(lines[4], fixture("p2pk").hex);
+    let err = stderr(&output);
+    assert!(
+        err.contains(&format!("{regtest_hash}: 3 transactions")),
+        "{err}"
+    );
+    assert!(
+        err.contains(&format!("{block_170_hash}: 2 transactions")),
+        "{err}"
+    );
+}
+
+#[test]
+fn aggregating_split_blocks_gives_the_same_totals_as_aggregate_blocks() {
+    let (regtest, _) = block_fixture("regtest-block");
+    let (block_170, _) = block_fixture("block-170");
+    let blocks = format!("{regtest}\n{block_170}\n");
+    let split = run(&["split-blocks"], Some(&blocks));
+    assert!(split.status.success(), "{}", stderr(&split));
+
+    let by_transaction = aggregate_json(&["--fee-rate", "3"], &stdout(&split));
+    let mut by_block = aggregate_json(&["--fee-rate", "3", "--blocks"], &blocks);
+
+    by_block.as_object_mut().unwrap().remove("blocks");
+    assert_eq!(by_block, by_transaction);
+}
+
+#[test]
+fn split_blocks_stops_at_a_block_that_fails_verification() {
+    let (regtest, _) = block_fixture("regtest-block");
+    let (block_170, _) = block_fixture("block-170");
+    // Flip the last hex digit: the last transaction's locktime.
+    let mut corrupted = block_170.clone();
+    let last = corrupted.pop().unwrap();
+    corrupted.push(if last == '0' { '1' } else { '0' });
+
+    let output = run(
+        &["split-blocks"],
+        Some(&format!("{regtest}\n{corrupted}\n")),
+    );
+
+    assert!(!output.status.success());
+    assert_eq!(stdout(&output), "", "no partial output to feed other tools");
+    let err = stderr(&output);
+    assert!(err.contains("line 2"), "{err}");
+    assert!(err.contains("merkle root mismatch"), "{err}");
 }

@@ -20,7 +20,8 @@ Modes:
   script implements was compared zero times, except those in ALLOWED_UNCOMPARED. CI runs
   this on the Fixtures.
 - `<sample file>`: one transaction hex per line, as `pqweight aggregate` reads (from
-  `scripts/fetch-blocks.py`). Counts are reported but zero counts don't fail.
+  `scripts/fetch-blocks.py <hashes> | pqweight split-blocks`, which verifies each block).
+  Counts are reported but zero counts don't fail.
 
 In `--fixtures` mode it also checks Move cost (ticket 22, "Move layouts" in the same doc)
 on every snapshot Fixture in `<dir>/snapshot/`: it classifies each coin from the Oracle's

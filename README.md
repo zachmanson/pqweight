@@ -22,8 +22,9 @@ There are four commands. The first three take raw transactions as hex, either as
 pqweight weight [--json] [<hex>]
 pqweight migrate --scheme <scheme> [--fee-rate <rate>] [--json] [<hex>]
 pqweight migrate --scheme <scheme> [--fee-rate <rate>] --json-lines [<path>]
-pqweight aggregate --scheme <scheme> [--fee-rate <rate>] [--json] [<path>]
+pqweight aggregate --scheme <scheme> [--fee-rate <rate>] [--json] [--blocks] [<path>]
 pqweight move-cost [--json] <snapshot>
+pqweight split-blocks [<path>]
 ```
 
 `<scheme>` is one of `ml-dsa-44`, `falcon-512`, `slh-dsa-128s`. `<rate>` is in sat/vB and can be a decimal like `1.5`.
@@ -95,12 +96,16 @@ pqweight migrate --scheme ml-dsa-44 --json-lines sample.txt | jq -c 'select(.mig
 
 `aggregate` reads one transaction hex per line (blank lines skipped) from a file or stdin. Lines that don't parse are listed as errors and the rest still count.
 
-The easiest way to get real input is to pull whole mainnet blocks from mempool.space:
+The easiest way to get real input is to pull whole mainnet blocks from mempool.space. `fetch-blocks.py` writes one raw block per line (what `bitcoin-cli getblock <hash> 0` prints), and `--blocks` reads that:
 
 ```sh
-python scripts/fetch-blocks.py <block hash> [<block hash>...] > sample.txt
-pqweight aggregate --scheme ml-dsa-44 --fee-rate 5 sample.txt
+python scripts/fetch-blocks.py <block hash> [<block hash>...] > blocks.txt
+pqweight aggregate --scheme ml-dsa-44 --fee-rate 5 --blocks blocks.txt
 ```
+
+With `--blocks`, each block is verified before it counts: it must parse with no bytes left over, its transactions must hash to the header's merkle root (a mutated tree, CVE-2012-2459, is rejected), and if any transaction has witness data the coinbase's BIP 141 witness commitment must match. A block that fails is listed as an error and dropped whole. Proof of work isn't checked. Instead, each block's row shows the hash computed from its own header, so you can compare it with the hash you asked for. The totals are the same as for the block's transactions one per line. The extra rows give each block's Block weight today and after migration, and that as a multiple of the 4,000,000 WU limit. Over the limit means those transactions wouldn't fit in one block, not that the block is invalid. A block with a partially mapped transaction shows `-` and the count, since it has no migrated weight.
+
+`pqweight split-blocks blocks.txt > sample.txt` verifies the same way and prints one transaction hex per line, for tools that take transactions (`aggregate` without `--blocks`, `migrate --json-lines` and the Python scripts). Each block's hash goes to stderr, and a block that fails stops the command.
 
 Output (from a small four-transaction file):
 
@@ -181,7 +186,7 @@ if let Some(total) = migration.migrated {
 }
 ```
 
-`aggregate(lines, parameter_set, fee_rate)` does the batch version, and `FeeRate::parse("1.5")` / `fee(vsize, rate)` handle fees without float rounding.
+`aggregate(lines, parameter_set, fee_rate)` does the batch version (`aggregate_blocks` for one raw block per line, `parse_block(bytes)` for one verified block), and `FeeRate::parse("1.5")` / `fee(vsize, rate)` handle fees without float rounding.
 
 ## Development
 

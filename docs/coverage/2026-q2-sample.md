@@ -26,7 +26,7 @@ Block 950000 is only about a quarter full (891,735 WU). The rule keeps it: it's 
 To reproduce:
 
 ```
-python scripts/fetch-blocks.py <the ten hashes> > sample.txt
+python scripts/fetch-blocks.py <the ten hashes> | pqweight split-blocks > sample.txt
 pqweight aggregate --scheme ml-dsa-44 sample.txt
 python scripts/shape-census.py <path to pqweight> sample.txt
 ```
@@ -37,6 +37,30 @@ Checks on the sample itself:
 
 - All 42,147 transactions parsed (0 parse errors). Per-block transaction counts match mempool.space's `tx_count`.
 - The summed baseline Weight is 36,829,984. The ten blocks' reported weights sum to 36,833,304. The 3,320 WU difference is exactly 10 × (80-byte header + 3-byte transaction count) × 4.
+
+### Verified blocks
+
+Ticket 14 (`.scratch/pq-migration/issues/14-block-parsing.md`). Re-run with the ticket 14 code from the raw blocks, so each block is checked rather than assumed: its transactions hash to the header's merkle root and its coinbase's witness commitment matches. Every block passed, the hashes computed from the blocks' own bytes are the hashes listed above, and the transaction count, baseline and migrated Weight and partially mapped baseline weight equal this report's, as does `aggregate` on the same blocks split one transaction per line.
+
+```
+python scripts/fetch-blocks.py <the ten hashes> > blocks.txt
+pqweight aggregate --scheme ml-dsa-44 --blocks blocks.txt
+```
+
+| Height | Hash computed from the block's bytes | Transactions | Block weight | Migrated Block weight (ML-DSA-44) | × the 4,000,000 WU limit |
+|---|---|---|---|---|---|
+| 943000 | `00000000000000000000b4644da0b48256b69c3c50339c9970bf9e8459072492` | 4,257 | 3,993,518 | - (2 partially mapped) | - |
+| 944400 | `000000000000000000006c8c4e2292fc88ce9a68e1b4863110aab5dc12011cc8` | 3,921 | 3,993,489 | - (7 partially mapped) | - |
+| 945800 | `00000000000000000001f6d305f8449ca5e4f3d1c735a95089b6a379b48699eb` | 3,149 | 3,993,541 | - (9 partially mapped) | - |
+| 947200 | `0000000000000000000110410e55bce6673ae494fc93430d1e900edde53e8380` | 5,654 | 3,993,678 | 34,030,127 | 8.5× |
+| 948600 | `000000000000000000021c123d619d38860c90d11623b6b5cf2b3cf677f9b80d` | 5,316 | 3,993,577 | - (6 partially mapped) | - |
+| 950000 | `000000000000000000010b93c9ea1c29fea277383f0f7d1f26de8b5802e885ff` | 639 | 891,735 | 4,603,646 | 1.2× |
+| 951400 | `000000000000000000011461eb9d250379c6ee29b69e62bce9880b524498ddb6` | 4,718 | 3,993,893 | - (28 partially mapped) | - |
+| 952800 | `00000000000000000000cbc4e840341ab4dd2e34e63dc4467be880a99e640119` | 3,757 | 3,993,800 | - (15 partially mapped) | - |
+| 954200 | `000000000000000000005fa7516dc0fe391e7c9c6904525631b6708fda71ff36` | 4,652 | 3,993,414 | - (7 partially mapped) | - |
+| 955600 | `0000000000000000000096a4825988f376713b46283185a71b79f0f6db2fff45` | 6,084 | 3,992,659 | - (2 partially mapped) | - |
+
+A block's migrated weight is its header and transaction count plus every transaction's migrated weight. A block with any partially mapped transaction has none (the all-or-nothing rule), which is why most rows show `-`. Over the limit means these transactions wouldn't fit in one block after migration, not that the block is invalid. The Block weights sum to the blocks' reported weights above.
 
 ## Thresholds, set before the run
 

@@ -17,6 +17,50 @@ pub fn decode_hex(hex: &str) -> Vec<u8> {
         .collect()
 }
 
+/// A block Fixture from `fixtures/block/`: one raw block and its Oracle values.
+pub struct BlockFixture {
+    pub hex: String,
+    pub bytes: Vec<u8>,
+    pub oracle: serde_json::Value,
+}
+
+/// Names of every block Fixture (`fixtures/block/<name>.hex`), sorted, so a
+/// newly recorded block is picked up without editing a list.
+pub fn block_fixture_names() -> Vec<String> {
+    let dir = fixtures_dir().join("block");
+    let mut names: Vec<String> = std::fs::read_dir(&dir)
+        .expect("block fixtures directory exists")
+        .map(|entry| entry.expect("readable directory entry").path())
+        .filter(|path| path.extension().is_some_and(|ext| ext == "hex"))
+        .map(|path| {
+            path.file_stem()
+                .expect("fixture has a name")
+                .to_string_lossy()
+                .into_owned()
+        })
+        .collect();
+    names.sort();
+    assert!(!names.is_empty(), "no block fixtures in {}", dir.display());
+    names
+}
+
+pub fn block_fixture(name: &str) -> BlockFixture {
+    let dir = fixtures_dir().join("block");
+    let hex = std::fs::read_to_string(dir.join(format!("{name}.hex")))
+        .expect("block fixture exists")
+        .trim()
+        .to_string();
+    let meta: serde_json::Value = serde_json::from_str(
+        &std::fs::read_to_string(dir.join(format!("{name}.json"))).expect("oracle exists"),
+    )
+    .expect("valid JSON");
+    BlockFixture {
+        bytes: decode_hex(&hex),
+        hex,
+        oracle: meta["oracle"].clone(),
+    }
+}
+
 /// Paths of every `<name>.hex` Fixture, sorted so failures are reproducible.
 pub fn fixture_hex_paths() -> Vec<PathBuf> {
     let dir = fixtures_dir();

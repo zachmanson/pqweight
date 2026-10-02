@@ -1,0 +1,10 @@
+{
+    "description":  "Mainnet block 170: the block holding the first person-to-person transaction (Satoshi to Hal Finney). 2 transactions, pre-segwit, so no witness commitment",
+    "oracle":  {
+                   "hash":  "00000000d1145790a8694403d4063f323d499e655c83426834d4ce2f8dd4a2ee",
+                   "merkleroot":  "7dac2c5666815c17a3b36427de37bb9d2e2c5ccec3f8633eb91a4205cb4c10ff",
+                   "nTx":  2
+               },
+    "oracle_note":  "Hash and merkle root are block 170's well-known values. Weight has no Core recording; tests compare it with rust-bitcoin's Block::weight (mempool.space reports 1960).",
+    "recorded_by":  "mempool.space /api/block/<hash>/raw (mainnet block added by hand)"
+}

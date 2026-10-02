@@ -3,9 +3,9 @@
 //! spend.
 
 use crate::migration::{
-    BaselineSpendType, InputResult, KeyExposure, ParameterSet, UnmappedReason, migrate,
+    BaselineSpendType, InputResult, KeyExposure, Migration, ParameterSet, UnmappedReason, migrate,
 };
-use crate::{FeeRate, TransactionWeight, fee, transaction_weight};
+use crate::{FeeRate, Hash256, TransactionWeight, fee, parse_block, transaction_weight};
 
 /// Weight and vsize summed across transactions.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
@@ -25,7 +25,8 @@ pub struct AggregateFeeTotals {
     pub migrated: Option<u64>,
 }
 
-/// A line that failed to parse as a transaction: recorded, not silently
+/// A line that failed to parse as a transaction (or, for
+/// [`aggregate_blocks`], to verify as a block): recorded, not silently
 /// dropped, and does not abort the batch.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct AggregateError {
@@ -123,7 +124,27 @@ pub struct AggregateResult {
     /// One row per Key exposure, always all four, in the order `Exposed in
     /// output`, `Hashed until spend`, `No key`, `Undetermined`.
     pub exposure: Vec<ExposureRow>,
+    /// One row per verified block, in input order. Empty unless the input was
+    /// blocks ([`aggregate_blocks`]).
+    pub blocks: Vec<BlockRow>,
     pub errors: Vec<AggregateError>,
+}
+
+/// One block of an [`aggregate_blocks`] run.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct BlockRow {
+    /// Computed from the block's own header bytes.
+    pub hash: Hash256,
+    pub transactions: usize,
+    /// **Block weight** today.
+    pub weight: u64,
+    /// **Block weight** after migration: the same header and transaction
+    /// count, plus every transaction's migrated weight. `None` when any
+    /// transaction is partially mapped, since the block then has no migrated
+    /// weight (the all-or-nothing rule).
+    pub migrated_weight: Option<u64>,
+    /// How many of its transactions are partially mapped.
+    pub partially_mapped: usize,
 }
 
 /// Runs `migrate()` over `lines` (one raw transaction hex string per line,
@@ -137,94 +158,175 @@ pub fn aggregate(
     parameter_set: ParameterSet,
     fee_rate: Option<FeeRate>,
 ) -> AggregateResult {
-    let mut baseline = AggregateTotals::default();
-    let mut migrated = AggregateTotals::default();
-    let mut partially_mapped = AggregateTotals::default();
-    let mut baseline_fee = 0u64;
-    let mut migrated_fee = 0u64;
-    let mut counts = AggregateCounts::default();
-    let mut breakdown: Vec<BreakdownRow> = Vec::new();
+    let mut sums = Sums::default();
     let mut errors = Vec::new();
-
-    for (index, raw_line) in lines.enumerate() {
-        let line = index + 1;
-        let hex = raw_line.trim();
-        if hex.is_empty() {
-            continue;
+    for (line, hex) in numbered_non_blank(lines) {
+        match crate::decode_hex(&hex).and_then(|bytes| measure(&bytes, parameter_set)) {
+            Ok(tx) => sums.add(&tx, fee_rate),
+            Err(message) => errors.push(AggregateError { line, message }),
         }
+    }
+    sums.finish(fee_rate, errors, Vec::new())
+}
 
-        let bytes = match crate::decode_hex(hex) {
-            Ok(bytes) => bytes,
-            Err(message) => {
-                errors.push(AggregateError { line, message });
-                continue;
+/// Like [`aggregate`], but each line is a whole raw block in hex (as
+/// `bitcoin-cli getblock <hash> 0` prints it). Each block is verified by
+/// [`parse_block`](crate::parse_block) and gets a [`BlockRow`]; the totals are
+/// sums over its transactions, exactly as `aggregate` gives for them.
+///
+/// A block that fails to decode or verify is recorded in
+/// [`AggregateResult::errors`] and dropped whole: none of its transactions
+/// are summed.
+pub fn aggregate_blocks(
+    lines: impl Iterator<Item = String>,
+    parameter_set: ParameterSet,
+    fee_rate: Option<FeeRate>,
+) -> AggregateResult {
+    let mut sums = Sums::default();
+    let mut errors = Vec::new();
+    let mut blocks = Vec::new();
+    for (line, hex) in numbered_non_blank(lines) {
+        match measure_block(&hex, parameter_set) {
+            Ok((row, txs)) => {
+                for tx in &txs {
+                    sums.add(tx, fee_rate);
+                }
+                blocks.push(row);
             }
-        };
-        let tx_baseline: TransactionWeight = match transaction_weight(&bytes) {
-            Ok(weight) => weight,
-            Err(err) => {
-                errors.push(AggregateError {
-                    line,
-                    message: err.to_string(),
-                });
-                continue;
-            }
-        };
-        let tx_migration = match migrate(&bytes, parameter_set) {
-            Ok(migration) => migration,
-            Err(err) => {
-                errors.push(AggregateError {
-                    line,
-                    message: err.to_string(),
-                });
-                continue;
-            }
-        };
+            Err(message) => errors.push(AggregateError { line, message }),
+        }
+    }
+    sums.finish(fee_rate, errors, blocks)
+}
 
-        counts.parsed += 1;
-        baseline.weight += tx_baseline.weight;
-        baseline.vsize += tx_baseline.vsize;
+/// The non-blank lines, trimmed, with their 1-indexed line numbers.
+fn numbered_non_blank(
+    lines: impl Iterator<Item = String>,
+) -> impl Iterator<Item = (usize, String)> {
+    lines
+        .enumerate()
+        .map(|(index, line)| (index + 1, line.trim().to_string()))
+        .filter(|(_, hex)| !hex.is_empty())
+}
+
+/// One transaction's weight today and its migration.
+struct Measured {
+    baseline: TransactionWeight,
+    migration: Migration,
+}
+
+fn measure(bytes: &[u8], parameter_set: ParameterSet) -> Result<Measured, String> {
+    Ok(Measured {
+        baseline: transaction_weight(bytes).map_err(|err| err.to_string())?,
+        migration: migrate(bytes, parameter_set).map_err(|err| err.to_string())?,
+    })
+}
+
+/// Verifies one block and measures all its transactions, or none.
+fn measure_block(
+    hex: &str,
+    parameter_set: ParameterSet,
+) -> Result<(BlockRow, Vec<Measured>), String> {
+    let bytes = crate::decode_hex(hex)?;
+    let block = parse_block(&bytes).map_err(|err| err.to_string())?;
+    let txs = block
+        .transactions
+        .iter()
+        .enumerate()
+        .map(|(index, tx)| {
+            measure(tx, parameter_set).map_err(|message| format!("transaction {index}: {message}"))
+        })
+        .collect::<Result<Vec<_>, _>>()?;
+    let partially_mapped = txs
+        .iter()
+        .filter(|tx| tx.migration.migrated.is_none())
+        .count();
+    // The header and transaction count are all of a block that is not a
+    // transaction, and migration leaves them as they are.
+    let overhead = block.weight - txs.iter().map(|tx| tx.baseline.weight).sum::<u64>();
+    let migrated_weight = txs
+        .iter()
+        .map(|tx| tx.migration.migrated.map(|total| total.weight))
+        .sum::<Option<u64>>()
+        .map(|weight| overhead + weight);
+    let row = BlockRow {
+        hash: block.hash,
+        transactions: txs.len(),
+        weight: block.weight,
+        migrated_weight,
+        partially_mapped,
+    };
+    Ok((row, txs))
+}
+
+/// Running sums over the transactions added so far.
+#[derive(Default)]
+struct Sums {
+    baseline: AggregateTotals,
+    migrated: AggregateTotals,
+    partially_mapped: AggregateTotals,
+    baseline_fee: u64,
+    migrated_fee: u64,
+    counts: AggregateCounts,
+    breakdown: Vec<BreakdownRow>,
+}
+
+impl Sums {
+    fn add(&mut self, tx: &Measured, fee_rate: Option<FeeRate>) {
+        self.counts.parsed += 1;
+        self.baseline.weight += tx.baseline.weight;
+        self.baseline.vsize += tx.baseline.vsize;
         if let Some(rate) = fee_rate {
-            baseline_fee += fee(tx_baseline.vsize, rate);
+            self.baseline_fee += fee(tx.baseline.vsize, rate);
         }
 
-        for input in &tx_migration.inputs {
-            add_to_breakdown(&mut breakdown, input);
+        for input in &tx.migration.inputs {
+            add_to_breakdown(&mut self.breakdown, input);
         }
 
-        counts.unmapped_inputs += tx_migration
+        self.counts.unmapped_inputs += tx
+            .migration
             .inputs
             .iter()
             .filter(|input| matches!(input, InputResult::Unmapped { .. }))
             .count();
 
-        if let Some(total) = tx_migration.migrated {
-            counts.fully_mapped += 1;
-            migrated.weight += total.weight;
-            migrated.vsize += total.vsize;
+        if let Some(total) = tx.migration.migrated {
+            self.counts.fully_mapped += 1;
+            self.migrated.weight += total.weight;
+            self.migrated.vsize += total.vsize;
             if let Some(rate) = fee_rate {
-                migrated_fee += fee(total.vsize, rate);
+                self.migrated_fee += fee(total.vsize, rate);
             }
         } else {
-            counts.partially_mapped += 1;
-            partially_mapped.weight += tx_baseline.weight;
-            partially_mapped.vsize += tx_baseline.vsize;
+            self.counts.partially_mapped += 1;
+            self.partially_mapped.weight += tx.baseline.weight;
+            self.partially_mapped.vsize += tx.baseline.vsize;
         }
     }
-    counts.parse_errors = errors.len();
 
-    AggregateResult {
-        baseline,
-        migrated: (counts.fully_mapped > 0).then_some(migrated),
-        partially_mapped,
-        fees: fee_rate.map(|_| AggregateFeeTotals {
-            baseline: baseline_fee,
-            migrated: (counts.fully_mapped > 0).then_some(migrated_fee),
-        }),
-        counts,
-        exposure: exposure_rows(&breakdown),
-        breakdown,
-        errors,
+    fn finish(
+        mut self,
+        fee_rate: Option<FeeRate>,
+        errors: Vec<AggregateError>,
+        blocks: Vec<BlockRow>,
+    ) -> AggregateResult {
+        self.counts.parse_errors = errors.len();
+        let any_mapped = self.counts.fully_mapped > 0;
+        AggregateResult {
+            baseline: self.baseline,
+            migrated: any_mapped.then_some(self.migrated),
+            partially_mapped: self.partially_mapped,
+            fees: fee_rate.map(|_| AggregateFeeTotals {
+                baseline: self.baseline_fee,
+                migrated: any_mapped.then_some(self.migrated_fee),
+            }),
+            counts: self.counts,
+            exposure: exposure_rows(&self.breakdown),
+            breakdown: self.breakdown,
+            blocks,
+            errors,
+        }
     }
 }
 

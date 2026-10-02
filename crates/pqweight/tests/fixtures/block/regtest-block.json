@@ -1,0 +1,18 @@
+{
+    "description":  "Regtest block: coinbase with witness commitment, one legacy P2PKH spend and one P2WPKH spend (3 transactions, so the merkle tree duplicates a hash)",
+    "oracle":  {
+                   "hash":  "23ea6a5230208df773cad4448434be45e83dc9c7f0037f6bcb20d33491594a12",
+                   "merkleroot":  "c4c4c28672f8cf1aec76e944eb53b5b6fcf63bb3850120441e314f2aa35b31f6",
+                   "weight":  2213,
+                   "size":  662,
+                   "strippedsize":  517,
+                   "nTx":  3,
+                   "tx":  [
+                              "582825b174476aa42f437b6d55892275c62936d062ac4d7709f9512f4d71f7bd",
+                              "d86b30e6f9e45707efa017bc76e40463980895254e3a64afe8f479ff538d0f05",
+                              "d9273da94c6adaba4345c9353f085766680a9b9126e114b79f2b2a366559411c"
+                          ]
+               },
+    "core_version":  "Satoshi:31.1.0",
+    "recorded_by":  "scripts/record-block-fixture.ps1"
+}

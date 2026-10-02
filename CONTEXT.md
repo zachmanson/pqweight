@@ -24,7 +24,7 @@ Bitcoin Core's reported `weight` and `vsize` for a transaction, the independent 
 _Avoid_: Reference implementation, ground truth
 
 **Fixture**:
-A raw transaction committed to the repo together with its Oracle values and the script that recorded them. The snapshot Fixture is the same idea for a whole UTXO snapshot: a regtest `dumptxoutset` file plus Core's view of every coin in it.
+A raw transaction committed to the repo together with its Oracle values and the script that recorded them. The snapshot Fixture is the same idea for a whole UTXO snapshot: a regtest `dumptxoutset` file plus Core's view of every coin in it. A block Fixture is a whole raw block plus Core's `getblock` values. The one mainnet block Fixture, block 170, has no Core recording: its Oracle values are its well-known hash and merkle root, and its weight is checked against `rust-bitcoin` only.
 _Avoid_: Test data, sample
 
 **Second calculation**:

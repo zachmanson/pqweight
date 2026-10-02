@@ -1,4 +1,4 @@
-Status: ready-for-agent
+Status: done
 
 # Verified blocks
 
@@ -54,3 +54,23 @@ Three-way, per ADR 0001: our code, `rust-bitcoin` (dev-dependency: `Block` conse
 ## Source
 
 Tickets 01 and 03 (Out of Scope).
+
+## Comments
+
+**2026-10-01, slices 1-4 done.**
+
+- `parse_block` and `Block` (hash, merkle root, transactions, Block weight) live in `src/block.rs`. `aggregate_blocks` and `BlockRow` live in `src/aggregate.rs`, which shares its per-transaction summing with `aggregate`, so the totals match by construction. The CLI gains `aggregate --blocks` and `split-blocks`. `fetch-blocks.py` now only downloads.
+- Fixtures are in `tests/fixtures/block/`. `regtest-block` was recorded by `scripts/record-block-fixture.ps1`: a coinbase plus a legacy spend and a P2WPKH spend. The node needs `-changetype=bech32`, otherwise the segwit spend can pick the legacy change and end up with no witness. `block-170` came from mempool.space.
+- Slice 4: all 13 blocks verified. The computed hashes and transaction counts equal the report tables, and the totals equal the reports. The per-block tables were added under "Verified blocks" in both reports.
+- Decisions made while implementing:
+  - The CLI prints `x8.2` and `-`, not `×` and `—`, because its output is ASCII elsewhere. The reports keep their own `8.2×` style.
+  - `--json` gives `migrated_limit_multiple` as an exact decimal (weight × 25 / 10^8).
+  - A zero transaction count is its own error (`NoTransactions`).
+- Known differences from Core's context-free `CheckBlock`, left out because the spec didn't ask for them; the merkle check bounds their risk:
+  - Transaction 0 isn't checked to be a coinbase (null prevout), and later transactions aren't checked not to be one.
+  - Core v27+ `IsBlockMutated` also rejects any transaction whose witness-stripped size is 64 bytes. We don't.
+
+**2026-10-02, code review.**
+
+- Fixed: one public `MAX_BLOCK_WEIGHT` (block.rs) used by move-cost and the CLI; `BlockError::Block` renamed `Framing`; block Fixtures are found by scanning `tests/fixtures/block/` instead of a hand-kept list; the regtest test also checks Core's `size` and `strippedsize`; the `split-blocks` CLI test compares every line; the 2026-09 report's ticket 21 run log keeps the command that ran at `19ecf9f`, with a note on how to reproduce today.
+- Left alone: `counts.parse_errors` also counts blocks that fail verification (renaming it changes the `--json` contract); the CLI keeps `x8.2` and `-` (decision above).

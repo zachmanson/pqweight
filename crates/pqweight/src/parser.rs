@@ -24,12 +24,21 @@ pub enum ParseError {
     },
 }
 
-struct Reader<'a> {
+pub(crate) struct Reader<'a> {
     bytes: &'a [u8],
     offset: usize,
 }
 
 impl<'a> Reader<'a> {
+    /// A reader positioned at `offset`, which counts from the start of `bytes`.
+    pub(crate) fn at(bytes: &'a [u8], offset: usize) -> Self {
+        Self { bytes, offset }
+    }
+
+    pub(crate) fn offset(&self) -> usize {
+        self.offset
+    }
+
     fn skip(&mut self, len: u64, reading: &'static str) -> Result<(), ParseError> {
         self.take(len, reading).map(|_| ())
     }
@@ -51,7 +60,7 @@ impl<'a> Reader<'a> {
     }
 
     /// Reads a variable-length integer (compact size).
-    fn read_compact_size(&mut self, reading: &'static str) -> Result<u64, ParseError> {
+    pub(crate) fn read_compact_size(&mut self, reading: &'static str) -> Result<u64, ParseError> {
         let field_offset = self.offset;
         let first = self.read_u8(reading)?;
         if first == 0xfd {
@@ -121,9 +130,16 @@ pub(crate) struct ParsedInput<'a> {
 
 /// A transaction split into the parts that migration needs.
 pub(crate) struct ParsedTransaction<'a> {
+    /// Full serialized length, including any witness data.
+    pub len: usize,
+    /// Where the witness section sits, for a transaction that has one. The
+    /// segwit marker and flag are always bytes 4 and 5.
+    pub witness_range: Option<std::ops::Range<usize>>,
     /// Serialization without marker, flag and witnesses.
     pub stripped_size: u64,
     pub inputs: Vec<ParsedInput<'a>>,
+    /// Each output's scriptPubKey.
+    pub output_scripts: Vec<&'a [u8]>,
 }
 
 /// Returns the stripped size: the serialization without marker, flag and witnesses.
@@ -132,7 +148,20 @@ pub(crate) fn measure(bytes: &[u8]) -> Result<u64, ParseError> {
 }
 
 pub(crate) fn parse(bytes: &[u8]) -> Result<ParsedTransaction<'_>, ParseError> {
-    let mut r = Reader { bytes, offset: 0 };
+    let tx = parse_prefix(bytes)?;
+    if tx.len != bytes.len() {
+        return Err(ParseError::TrailingBytes {
+            offset: tx.len,
+            remaining: bytes.len() - tx.len,
+        });
+    }
+    Ok(tx)
+}
+
+/// Parses the transaction at the start of `bytes`, which may continue past
+/// its end (as in a block). Offsets in errors count from the start of `bytes`.
+pub(crate) fn parse_prefix(bytes: &[u8]) -> Result<ParsedTransaction<'_>, ParseError> {
+    let mut r = Reader::at(bytes, 0);
     r.skip(4, "version")?;
     let mut inputs = r.read_compact_size("input count")?;
     // An input count of zero is the segwit marker; a flag byte follows it.
@@ -161,12 +190,14 @@ pub(crate) fn parse(bytes: &[u8]) -> Result<ParsedTransaction<'_>, ParseError> {
         });
     }
     let outputs = r.read_compact_size("output count")?;
+    let mut output_scripts = Vec::new();
     for _ in 0..outputs {
         r.skip(8, "output value")?;
         let script_len = r.read_compact_size("scriptPubKey length")?;
-        r.skip(script_len, "scriptPubKey")?;
+        output_scripts.push(r.take(script_len, "scriptPubKey")?);
     }
     let mut discounted = 0;
+    let mut witness_range = None;
     if segwit {
         let witness_start = r.offset;
         let mut any_witness = false;
@@ -187,17 +218,15 @@ pub(crate) fn parse(bytes: &[u8]) -> Result<ParsedTransaction<'_>, ParseError> {
         }
         // Marker and flag, plus everything just read.
         discounted = 2 + (r.offset - witness_start);
+        witness_range = Some(witness_start..r.offset);
     }
     r.skip(4, "locktime")?;
-    if r.offset != bytes.len() {
-        return Err(ParseError::TrailingBytes {
-            offset: r.offset,
-            remaining: bytes.len() - r.offset,
-        });
-    }
     Ok(ParsedTransaction {
+        len: r.offset,
+        witness_range,
         stripped_size: (r.offset - discounted) as u64,
         inputs: parsed_inputs,
+        output_scripts,
     })
 }
 

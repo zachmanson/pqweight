@@ -2,6 +2,7 @@
 //! with today's signatures into PQ outputs (ticket 22). The layouts are the
 //! stated assumptions in `docs/migration-templates.md`, "Move layouts".
 
+use crate::MAX_BLOCK_WEIGHT;
 use crate::migration::{MultisigThreshold, bare_multisig_threshold, compact_size_len};
 use crate::snapshot::{Coin, CoinScript};
 
@@ -15,9 +16,6 @@ pub const MOVE_COST_ASSUMPTIONS: [&str; 6] = [
     "floor: perfect consolidation (spend weights only); ceiling: one coin per transaction, 1 input and 1 output",
     "blocks hold nothing but moves; coins exposed only by address reuse are not counted, so every number is a lower bound",
 ];
-
-/// Consensus limit on a block's weight, the unit "blocks" are counted in.
-const MAX_BLOCK_WEIGHT: u64 = 4_000_000;
 
 /// Coins below this many sats are left out of the `above_dust` totals:
 /// inscription postage and data outputs nobody will pay to move.

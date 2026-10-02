@@ -1,6 +1,7 @@
 //! Bitcoin transaction weight, and how it changes under post-quantum signatures.
 
 mod aggregate;
+mod block;
 mod fee;
 mod migration;
 mod move_cost;
@@ -9,8 +10,9 @@ mod snapshot;
 
 pub use aggregate::{
     AggregateCounts, AggregateError, AggregateFeeTotals, AggregateResult, AggregateTotals,
-    BreakdownKind, BreakdownRow, ExposureRow, aggregate,
+    BlockRow, BreakdownKind, BreakdownRow, ExposureRow, aggregate, aggregate_blocks,
 };
+pub use block::{Block, BlockError, Hash256, MAX_BLOCK_WEIGHT, parse_block};
 pub use fee::{FeeRate, FeeRateError, fee};
 pub use migration::{
     BaselineSpendType, InputResult, KeyExposure, Migration, MultisigThreshold, ParameterSet,

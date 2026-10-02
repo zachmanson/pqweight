@@ -1,7 +1,7 @@
 """Counts the rare spend shapes that decide backlog tickets, in a coverage sample.
 
 Reads the same input as `pqweight aggregate` (one transaction hex per line, from
-`scripts/fetch-blocks.py`) and prints one table: for each shape, the number of
+`scripts/fetch-blocks.py <hashes> | pqweight split-blocks`) and prints one table: for each shape, the number of
 inputs and their Input weight, next to the sample's total Input weight.
 
 Shapes counted (ticket 08, decision 5):
