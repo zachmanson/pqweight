@@ -15,6 +15,10 @@ _Avoid_: vbytes (as a synonym for weight)
 **Witness discount**:
 The rule that witness bytes count 1 weight unit each while non-witness bytes count 4.
 
+**Block weight**:
+The Weight of a whole block: its 80-byte header and transaction count at 4 weight units per byte, plus every transaction's Weight. A migrated Block weight exists only when every transaction in the block is Fully mapped.
+_Avoid_: Block size
+
 **Oracle**:
 Bitcoin Core's reported `weight` and `vsize` for a transaction, the independent source of truth expected values are checked against.
 _Avoid_: Reference implementation, ground truth
@@ -28,7 +32,7 @@ An independent reimplementation of the Migration templates that builds the migra
 _Avoid_: Oracle, cross-validation
 
 **Coverage sample**:
-A set of mainnet blocks, identified by hash, run through `aggregate` to measure how much real traffic the Migration templates cover. Unlike a Fixture it has no Oracle values, and its raw transactions aren't committed.
+A set of mainnet blocks, identified by the hashes computed from their bytes, run through `aggregate` to measure how much real traffic the Migration templates cover. Unlike a Fixture it has no Oracle values, and its raw transactions aren't committed.
 _Avoid_: Test set, dataset
 
 **Migration template**:
