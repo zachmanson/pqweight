@@ -209,4 +209,4 @@ Weight tests run against **fixtures** in `crates/pqweight/tests/fixtures/`: sign
 
 ## License
 
-MIT or Apache-2.0, at your option.
+Licensed under either of [Apache License 2.0](LICENSE-APACHE) or [MIT](LICENSE-MIT), at your option.
