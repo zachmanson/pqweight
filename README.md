@@ -125,33 +125,35 @@ fully mapped: 4
 partially mapped: 0
 unmapped inputs: 0
 parse errors: 0
-baseline weight: 2286
-baseline vsize: 572
-migrated weight: 25422
-migrated vsize: 6358
-baseline fee: 2860 sat
-migrated fee: 31790 sat
+baseline weight: 1879
+baseline vsize: 471
+migrated weight: 21342
+migrated vsize: 5338
+baseline fee: 2355 sat
+migrated fee: 26690 sat
 partially mapped baseline weight: 0 (0.0% of baseline)
-breakdown (inputs, % of inputs, baseline input weight, % of it, migrated input weight, added input weight, % of it):
-mapped:
-  P2WSH multisig 2-of-3               1   20.0%           416   28.7%          8963          8547   36.9%
-  P2TR key-path                       2   40.0%           460   31.7%          7806          7346   31.8%
-  P2WPKH                              1   20.0%           270   18.6%          3903          3633   15.7%
-  P2TR script-path single-key         1   20.0%           304   21.0%          3914          3610   15.6%
-unmapped:
+by spend type (WU columns are Input weight; added = post-quantum - today)
+  spend type                   inputs  % inputs  today WU  % today  post-quantum WU  added WU  % added
+mapped
+  P2WSH multisig 2-of-3             1     25.0%       416    34.2%            8,963     8,547    43.9%
+  P2TR key-path                     1     25.0%       230    18.9%            3,903     3,673    18.9%
+  P2WPKH                            1     25.0%       270    22.2%            3,903     3,633    18.7%
+  P2TR script-path single-key       1     25.0%       299    24.6%            3,909     3,610    18.5%
+unmapped
   (none)
-key exposure (mapped inputs, baseline input weight, migrated input weight, added weight, % of it, unmapped inputs, their baseline input weight):
-  Exposed in output          3           764         11720         10956   47.4%         0             0
-  Hashed until spend         2           686         12866         12180   52.6%         0             0
-  No key                     0             0             0             0    0.0%         0             0
-  Undetermined               0             0             0             0    0.0%         0             0
+by key exposure (mapped = inputs with a template; WU columns before "unmapped" are theirs)
+  key exposure        mapped  today WU  post-quantum WU  added WU  % added  unmapped  unmapped WU
+  Exposed in output        2       529            7,812     7,283    37.4%         0            0
+  Hashed until spend       2       686           12,866    12,180    62.6%         0            0
+  No key                   0         0                0         0     0.0%         0            0
+  Undetermined             0         0                0         0     0.0%         0            0
 ```
 
 How to read it:
 
 - **Migrated totals only include fully mapped transactions.** A transaction with any unmapped input still counts toward the baseline but never the migrated total, and `partially mapped baseline weight` tells you how much of the baseline that left out.
-- **Breakdown** splits inputs by spend type (and by Unmapped reason), so you can see which spend types drive the growth. Mapped rows are sorted by `added input weight`, the block space migrating that spend type would add; its `% of it` is of the total Added weight, the same total as the key exposure table's. Unmapped rows have no Added weight and are sorted by baseline Input weight.
-- **Key exposure** splits the same inputs by where their public key sat before the spend. `Exposed in output` (P2TR, P2PK) is open to a long-exposure quantum attack; `Hashed until spend` (P2WPKH, P2PKH, ...) only once the key is revealed. `added weight` is the block space migrating just that group would add.
+- **Breakdown** splits inputs by spend type (and by Unmapped reason), so you can see which spend types drive the growth. WU columns are Input weight. Mapped rows are sorted by `added WU`, the block space migrating that spend type would add; `% added` is its share of the total Added weight, the same total as the key exposure table's. Unmapped rows have no Added weight and are sorted by baseline Input weight.
+- **Key exposure** splits the same inputs by where their public key sat before the spend. `Exposed in output` (P2TR, P2PK) is open to a long-exposure quantum attack; `Hashed until spend` (P2WPKH, P2PKH, ...) only once the key is revealed. `added WU` is the block space migrating just that group would add.
 
 `--json` prints the same report as one object (`scheme`, `fee_rate`, `counts`, `baseline`, `migrated`, `partially_mapped`, `fee`, `breakdown`, `key_exposure`, `errors`), using `migrate --json`'s names for spend types, thresholds and Unmapped reasons. `migrated` is `null` when no transaction is fully mapped, and `fee` is left out without `--fee-rate`:
 

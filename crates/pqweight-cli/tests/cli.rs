@@ -327,7 +327,7 @@ fn stdin_starting_with_a_byte_order_mark_is_read_as_if_it_had_none() {
 
 #[test]
 fn a_file_starting_with_a_byte_order_mark_is_read_as_if_it_had_none() {
-    // Notepad and PowerShell's Out-File can save UTF-8 with a BOM.
+    // Notepad and PowerShell's `Out-File -Encoding utf8` save UTF-8 with a BOM.
     let fx = p2wpkh_fixture();
     let path = scratch_file("bom");
     std::fs::write(&path, format!("\u{feff}{}\r\n{}\r\n", fx.hex, fx.hex)).unwrap();
@@ -510,11 +510,11 @@ fn aggregate_command_prints_a_breakdown_by_spend_type_and_unmapped_reason() {
     // Input weights from the library's breakdown test: P2WPKH 270 each (template
     // 3903 each), P2TR key-path with annex 234. 540 / 774 = 69.8%,
     // 234 / 774 = 30.2%.
-    // Columns: inputs, % of inputs, baseline Input weight, % of it, migrated,
-    // Added weight, % of all Added weight. 2 x (3903 - 270) = 7266 added.
+    // Columns: inputs, % inputs, today WU, % today, post-quantum WU, added WU,
+    // % added (of all Added weight). 2 x (3903 - 270) = 7266 added.
     assert_eq!(
         row_after(&text, "P2WPKH"),
-        ["2", "66.7%", "540", "69.8%", "7806", "7266", "100.0%"]
+        ["2", "66.7%", "540", "69.8%", "7,806", "7,266", "100.0%"]
     );
     assert_eq!(
         row_after(&text, "P2TR key-path with annex"),
@@ -525,6 +525,108 @@ fn aggregate_command_prints_a_breakdown_by_spend_type_and_unmapped_reason() {
     assert!(
         text.contains("partially mapped baseline weight: 400 (31.4% of baseline)"),
         "{text}"
+    );
+}
+
+/// Each column's header ends where the column's values end (values are
+/// right-aligned), so a reader can match numbers to headers by eye.
+fn assert_header_lines_up(text: &str, header: &str, row_label: &str, columns: &[&str]) {
+    let header_line = text
+        .lines()
+        .find(|line| line.trim_start().starts_with(header))
+        .unwrap_or_else(|| {
+            panic!(
+                "no {header} header in:
+{text}"
+            )
+        });
+    let row_line = text
+        .lines()
+        .find(|line| line.trim_start().starts_with(row_label))
+        .unwrap_or_else(|| {
+            panic!(
+                "no {row_label} row in:
+{text}"
+            )
+        });
+    let value_ends: Vec<usize> = row_line
+        .char_indices()
+        .filter(|&(i, c)| {
+            c != ' ' && row_line[i + c.len_utf8()..].starts_with(' ')
+                || i + c.len_utf8() == row_line.len()
+        })
+        .map(|(i, c)| i + c.len_utf8())
+        .collect();
+    for column in columns {
+        let end = header_line
+            .find(column)
+            .unwrap_or_else(|| panic!("no {column} in {header_line}"))
+            + column.len();
+        assert!(
+            value_ends.contains(&end),
+            "{column} doesn't line up:
+{header_line}
+{row_line}"
+        );
+    }
+}
+
+#[test]
+fn aggregate_command_tables_have_headers_lined_up_with_their_columns() {
+    let (block_170, _) = block_fixture("block-170");
+    let p2wpkh = p2wpkh_fixture();
+
+    let output = run(
+        &["aggregate", "--scheme", "ml-dsa-44", "--blocks"],
+        Some(&format!(
+            "{block_170}
+"
+        )),
+    );
+    let blocks = stdout(&output);
+    let output = run(
+        &["aggregate", "--scheme", "ml-dsa-44"],
+        Some(&format!(
+            "{}
+",
+            p2wpkh.hex
+        )),
+    );
+    let text = stdout(&output);
+
+    assert_header_lines_up(
+        &text,
+        "spend type",
+        "P2WPKH",
+        &[
+            "inputs",
+            "% inputs",
+            "today WU",
+            "% today",
+            "post-quantum WU",
+            "added WU",
+            "% added",
+        ],
+    );
+    assert_header_lines_up(
+        &text,
+        "key exposure",
+        "Hashed until spend",
+        &[
+            "mapped",
+            "today WU",
+            "post-quantum WU",
+            "added WU",
+            "% added",
+            "unmapped",
+            "unmapped WU",
+        ],
+    );
+    assert_header_lines_up(
+        &blocks,
+        "block hash",
+        "00000000d1145790",
+        &["txs", "today WU", "post-quantum WU", "x limit"],
     );
 }
 
@@ -560,11 +662,11 @@ fn aggregate_command_sorts_mapped_breakdown_rows_by_added_weight() {
     // P2WPKH is larger today but P2TR key-path adds more, so it comes first.
     assert_eq!(
         row_after(&text, "P2TR key-path"),
-        ["1", "33.3%", "230", "31.3%", "3903", "3673", "50.3%"]
+        ["1", "33.3%", "230", "31.3%", "3,903", "3,673", "50.3%"]
     );
     assert_eq!(
         row_after(&text, "P2WPKH"),
-        ["1", "33.3%", "270", "36.8%", "3903", "3633", "49.7%"]
+        ["1", "33.3%", "270", "36.8%", "3,903", "3,633", "49.7%"]
     );
     assert_eq!(
         row_after(&text, "P2TR key-path with annex"),
@@ -629,13 +731,13 @@ fn aggregate_command_prints_added_weight_by_key_exposure() {
 
     assert!(output.status.success(), "{}", stderr(&output));
     let text = stdout(&output);
-    // Columns: mapped inputs, baseline Input weight, migrated, Added weight,
-    // % of all Added weight, Unmapped inputs, their baseline Input weight.
+    // Columns: mapped, today WU, post-quantum WU, added WU, % added (of all
+    // Added weight), unmapped, unmapped WU (their baseline Input weight).
     // P2WPKH: 2 x 270 = 540 today, 2 x 3903 = 7806 migrated, 7266 added: all of it.
     // P2TR key-path with annex: Unmapped, 234.
     assert_eq!(
         row_after(&text, "Hashed until spend"),
-        ["2", "540", "7806", "7266", "100.0%", "0", "0"]
+        ["2", "540", "7,806", "7,266", "100.0%", "0", "0"]
     );
     assert_eq!(
         row_after(&text, "Exposed in output"),
@@ -1087,7 +1189,7 @@ fn aggregate_blocks_prints_a_row_per_block_and_what_over_the_limit_means() {
     assert!(regtest_row[3].starts_with('x'), "{text}");
     // Block 170's P2PK spend is Unmapped: no migrated weight, and the count.
     let block_170_row = row_after(&text, &block_170_hash);
-    assert_eq!(block_170_row[..3], ["2", "1960", "-"], "{text}");
+    assert_eq!(block_170_row[..4], ["2", "1,960", "-", "-"], "{text}");
     assert!(text.contains("1 partially mapped"), "{text}");
     assert!(text.contains("wouldn't fit in one block"), "{text}");
 }

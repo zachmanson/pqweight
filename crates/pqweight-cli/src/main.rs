@@ -480,22 +480,38 @@ fn block_row_json(row: &BlockRow) -> String {
 /// The `aggregate --blocks` table: one row per block, then what a migrated
 /// weight over the limit means.
 fn blocks_table(blocks: &[BlockRow]) -> Vec<String> {
-    let mut lines = vec![
-        "blocks (transactions, Block weight, migrated Block weight, x the 4,000,000 WU limit):"
-            .to_string(),
-    ];
+    let mut lines = vec!["by block".to_string()];
     if blocks.is_empty() {
         lines.push("  (none)".to_string());
+        return lines;
     }
+    let mut rows = vec![cells(&[
+        "block hash",
+        "txs",
+        "today WU",
+        "post-quantum WU",
+        "x limit",
+    ])];
     for row in blocks {
-        let migrated = match row.migrated_weight {
-            Some(weight) => format!("{:>9}  {}", weight, limit_multiple_label(weight)),
-            None => format!("{:>9}  ({} partially mapped)", "-", row.partially_mapped),
-        };
-        lines.push(format!(
-            "  {}  {:>6}  {:>9}  {migrated}",
-            row.hash, row.transactions, row.weight
-        ));
+        rows.push(vec![
+            row.hash.to_string(),
+            grouped(row.transactions as u64),
+            grouped(row.weight),
+            row.migrated_weight.map_or_else(dash, grouped),
+            row.migrated_weight.map_or_else(dash, limit_multiple_label),
+        ]);
+    }
+    let table = aligned(&rows, "  ");
+    lines.push(table[0].clone());
+    for (line, row) in table[1..].iter().zip(blocks) {
+        if row.migrated_weight.is_none() {
+            lines.push(format!(
+                "{line}  ({} partially mapped)",
+                row.partially_mapped
+            ));
+        } else {
+            lines.push(line.clone());
+        }
     }
     lines.push(
         "over the limit means these transactions wouldn't fit in one block, not that the block is invalid; \"-\" means a partially mapped transaction leaves the block without a migrated weight"
@@ -597,7 +613,7 @@ fn aggregate_human(result: &AggregateResult, blocks: bool) -> String {
 }
 
 /// The breakdown as two sections, Mapped rows then Unmapped rows, in
-/// [`sorted_breakdown`]'s order.
+/// [`sorted_breakdown`]'s order, under one header so both line up.
 fn breakdown_table(breakdown: &[BreakdownRow]) -> Vec<String> {
     let total_inputs: usize = breakdown.iter().map(|row| row.inputs).sum();
     let total_weight: u64 = breakdown.iter().map(|row| row.baseline_weight).sum();
@@ -605,52 +621,54 @@ fn breakdown_table(breakdown: &[BreakdownRow]) -> Vec<String> {
         .iter()
         .filter_map(BreakdownRow::added_weight)
         .sum();
-    let label = |row: &BreakdownRow| match row.kind {
-        BreakdownKind::Mapped(spend_type) => spend_type_label(spend_type),
-        BreakdownKind::Unmapped(reason) => unmapped_reason_name(reason).to_string(),
-    };
-    let width = breakdown
-        .iter()
-        .map(|row| label(row).len())
-        .max()
-        .unwrap_or(0);
+    let sorted = sorted_breakdown(breakdown);
+    let is_mapped = |row: &BreakdownRow| matches!(row.kind, BreakdownKind::Mapped(_));
+
+    let mut rows = vec![cells(&[
+        "spend type",
+        "inputs",
+        "% inputs",
+        "today WU",
+        "% today",
+        "post-quantum WU",
+        "added WU",
+        "% added",
+    ])];
+    for row in &sorted {
+        let label = match row.kind {
+            BreakdownKind::Mapped(spend_type) => spend_type_label(spend_type),
+            BreakdownKind::Unmapped(reason) => unmapped_reason_name(reason).to_string(),
+        };
+        rows.push(vec![
+            label,
+            grouped(row.inputs as u64),
+            percent(row.inputs as u64, total_inputs as u64),
+            grouped(row.baseline_weight),
+            percent(row.baseline_weight, total_weight),
+            row.migrated_weight.map_or_else(dash, grouped),
+            row.added_weight().map_or_else(dash, grouped_signed),
+            row.added_weight()
+                .map_or_else(dash, |weight| signed_percent(weight, total_added)),
+        ]);
+    }
+    let table = aligned(&rows, "  ");
 
     let mut lines = vec![
-        "breakdown (inputs, % of inputs, baseline input weight, % of it, migrated input weight, added input weight, % of it):"
-            .to_string(),
+        "by spend type (WU columns are Input weight; added = post-quantum - today)".to_string(),
+        table[0].clone(),
     ];
-    for (heading, mapped) in [("mapped:", true), ("unmapped:", false)] {
+    for (heading, mapped) in [("mapped", true), ("unmapped", false)] {
         lines.push(heading.to_string());
-        let rows: Vec<&BreakdownRow> = sorted_breakdown(breakdown)
-            .into_iter()
-            .filter(|row| matches!(row.kind, BreakdownKind::Mapped(_)) == mapped)
+        let section: Vec<&String> = table[1..]
+            .iter()
+            .zip(&sorted)
+            .filter(|(_, row)| is_mapped(row) == mapped)
+            .map(|(line, _)| line)
             .collect();
-        if rows.is_empty() {
+        if section.is_empty() {
             lines.push("  (none)".to_string());
         }
-        for row in rows {
-            let dash = || "-".to_string();
-            let migrated = row
-                .migrated_weight
-                .map_or_else(dash, |weight| weight.to_string());
-            let added = row
-                .added_weight()
-                .map_or_else(dash, |weight| weight.to_string());
-            let added_percent = row
-                .added_weight()
-                .map_or_else(dash, |weight| signed_percent(weight, total_added));
-            lines.push(format!(
-                "  {:<width$}  {:>8}  {:>6}  {:>12}  {:>6}  {:>12}  {:>12}  {:>6}",
-                label(row),
-                row.inputs,
-                percent(row.inputs as u64, total_inputs as u64),
-                row.baseline_weight,
-                percent(row.baseline_weight, total_weight),
-                migrated,
-                added,
-                added_percent,
-            ));
-        }
+        lines.extend(section.into_iter().cloned());
     }
     lines
 }
@@ -658,30 +676,78 @@ fn breakdown_table(breakdown: &[BreakdownRow]) -> Vec<String> {
 /// One row per Key exposure, in the library's fixed order.
 fn exposure_table(exposure: &[ExposureRow]) -> Vec<String> {
     let total_added: i64 = exposure.iter().map(ExposureRow::added_weight).sum();
-    let width = exposure
-        .iter()
-        .map(|row| key_exposure_name(row.key_exposure).len())
-        .max()
-        .unwrap_or(0);
-
+    let mut rows = vec![cells(&[
+        "key exposure",
+        "mapped",
+        "today WU",
+        "post-quantum WU",
+        "added WU",
+        "% added",
+        "unmapped",
+        "unmapped WU",
+    ])];
+    for row in exposure {
+        rows.push(vec![
+            key_exposure_name(row.key_exposure).to_string(),
+            grouped(row.mapped_inputs as u64),
+            grouped(row.baseline_weight),
+            grouped(row.migrated_weight),
+            grouped_signed(row.added_weight()),
+            signed_percent(row.added_weight(), total_added),
+            grouped(row.unmapped_inputs as u64),
+            grouped(row.unmapped_baseline_weight),
+        ]);
+    }
     let mut lines = vec![
-        "key exposure (mapped inputs, baseline input weight, migrated input weight, added weight, % of it, unmapped inputs, their baseline input weight):"
+        "by key exposure (mapped = inputs with a template; WU columns before \"unmapped\" are theirs)"
             .to_string(),
     ];
-    for row in exposure {
-        lines.push(format!(
-            "  {:<width$}  {:>8}  {:>12}  {:>12}  {:>12}  {:>6}  {:>8}  {:>12}",
-            key_exposure_name(row.key_exposure),
-            row.mapped_inputs,
-            row.baseline_weight,
-            row.migrated_weight,
-            row.added_weight(),
-            signed_percent(row.added_weight(), total_added),
-            row.unmapped_inputs,
-            row.unmapped_baseline_weight,
-        ));
-    }
+    lines.extend(aligned(&rows, "  "));
     lines
+}
+
+/// `rows` as lines of columns two spaces apart, each as wide as its widest
+/// cell: the first column left-aligned, the rest (numbers) right-aligned.
+/// The first row is normally the header.
+fn aligned(rows: &[Vec<String>], indent: &str) -> Vec<String> {
+    let columns = rows.iter().map(Vec::len).max().unwrap_or(0);
+    let widths: Vec<usize> = (0..columns)
+        .map(|column| {
+            rows.iter()
+                .filter_map(|row| row.get(column))
+                .map(String::len)
+                .max()
+                .unwrap_or(0)
+        })
+        .collect();
+    rows.iter()
+        .map(|row| {
+            let mut line = indent.to_string();
+            for (column, (cell, width)) in row.iter().zip(&widths).enumerate() {
+                if column == 0 {
+                    let _ = write!(line, "{cell:width$}");
+                } else {
+                    let _ = write!(line, "  {cell:>width$}");
+                }
+            }
+            line.trim_end().to_string()
+        })
+        .collect()
+}
+
+fn cells(names: &[&str]) -> Vec<String> {
+    names.iter().map(|name| (*name).to_string()).collect()
+}
+
+fn dash() -> String {
+    "-".to_string()
+}
+
+/// [`grouped`] for a signed value such as Added weight, which is negative when
+/// a template is smaller than today's spend.
+fn grouped_signed(n: i64) -> String {
+    let digits = grouped(n.unsigned_abs());
+    if n < 0 { format!("-{digits}") } else { digits }
 }
 
 /// `part` as a percentage of `whole` to one decimal place, for signed values
@@ -794,28 +860,29 @@ fn migrate_human(
     let mut lines = vec![migrate_summary(baseline, migration, parameter_set, fees)];
 
     // Today vs post-quantum; "-" where there's no migrated total.
-    let pq = |value: Option<u64>| value.map_or_else(|| "-".to_string(), grouped);
+    let pq = |value: Option<u64>| value.map_or_else(dash, grouped);
     let mut rows = vec![
-        [
+        cells(&["", "today", "post-quantum"]),
+        vec![
             "weight (WU)".to_string(),
             grouped(baseline.weight),
             pq(migrated.map(|total| total.weight)),
         ],
-        [
+        vec![
             "vsize (vB)".to_string(),
             grouped(baseline.vsize),
             pq(migrated.map(|total| total.vsize)),
         ],
     ];
     if let Some((rate, baseline_fee, pq_fee)) = fees {
-        rows.push([
+        rows.push(vec![
             format!("fee (sat, {rate} sat/vB)"),
             grouped(baseline_fee),
             pq(pq_fee),
         ]);
     }
     lines.push(String::new());
-    lines.extend(migrate_table(&rows));
+    lines.extend(aligned(&rows, ""));
 
     lines.push(String::new());
     lines.push("inputs".to_string());
@@ -868,30 +935,6 @@ fn migrate_summary(
         let _ = write!(summary, ", {} the fee", times(pq_fee, baseline_fee));
     }
     summary
-}
-
-/// `rows` of (label, today, post-quantum) under a header, numbers right-aligned.
-fn migrate_table(rows: &[[String; 3]]) -> Vec<String> {
-    let header = [
-        String::new(),
-        "today".to_string(),
-        "post-quantum".to_string(),
-    ];
-    let width = |column: usize| {
-        rows.iter()
-            .chain([&header])
-            .map(|row| row[column].len())
-            .max()
-            .unwrap_or(0)
-    };
-    let (label_width, today_width, pq_width) = (width(0), width(1), width(2));
-    [&header]
-        .into_iter()
-        .chain(rows)
-        .map(|[label, today, post_quantum]| {
-            format!("{label:label_width$}  {today:>today_width$}  {post_quantum:>pq_width$}")
-        })
-        .collect()
 }
 
 /// One line per input: what it is, its Input weight today -> migrated (or just
