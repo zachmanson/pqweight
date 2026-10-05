@@ -16,7 +16,7 @@ pub use block::{Block, BlockError, Hash256, MAX_BLOCK_WEIGHT, parse_block};
 pub use fee::{FeeRate, FeeRateError, fee};
 pub use migration::{
     BaselineSpendType, InputResult, KeyExposure, Migration, MultisigThreshold, ParameterSet,
-    UnmappedReason, migrate,
+    RELAY_WEIGHT_LIMIT, UnmappedReason, migrate,
 };
 pub use move_cost::{
     ExposedType, MOVE_COST_ASSUMPTIONS, MoveCost, MoveCostRow, MoveCostTotals, move_cost,

@@ -6,8 +6,8 @@ use pqweight::{
     AggregateResult, BaselineSpendType, BlockRow, BreakdownKind, BreakdownRow, ExposedType,
     ExposureRow, FeeRate, Hash256, InputResult, KeyExposure, MAX_BLOCK_WEIGHT,
     MOVE_COST_ASSUMPTIONS, Migration, MoveCost, MoveCostRow, MoveCostTotals, MultisigThreshold,
-    ParameterSet, SnapshotHeader, TransactionWeight, UnmappedReason, aggregate, aggregate_blocks,
-    fee, read_snapshot,
+    ParameterSet, RELAY_WEIGHT_LIMIT, SnapshotHeader, TransactionWeight, UnmappedReason, aggregate,
+    aggregate_blocks, fee, read_snapshot,
 };
 
 fn main() -> ExitCode {
@@ -112,7 +112,12 @@ fn run_migrate(args: &[String]) -> Result<String, String> {
     if json {
         Ok(migrate_json(None, &baseline, &migration, fee_rate))
     } else {
-        Ok(migrate_human(&migration, baseline.vsize, fee_rate))
+        Ok(migrate_human(
+            &baseline,
+            &migration,
+            parameter_set,
+            fee_rate,
+        ))
     }
 }
 
@@ -770,64 +775,189 @@ fn spend_type_label(spend_type: BaselineSpendType) -> String {
     }
 }
 
-fn migrate_human(migration: &Migration, baseline_vsize: u64, fee_rate: Option<FeeRate>) -> String {
-    let mut lines = Vec::new();
-    for (i, input) in migration.inputs.iter().enumerate() {
-        lines.push(match input {
-            InputResult::Mapped {
-                spend_type,
-                template_weight,
-                ..
-            } => format!(
-                "input {i}: mapped ({}), weight: {template_weight}, key exposure: {}",
-                spend_type_label(*spend_type),
-                key_exposure_name(spend_type.key_exposure())
-            ),
-            InputResult::Unmapped { reason, .. } => format!(
-                "input {i}: unmapped ({}), key exposure: {}",
-                unmapped_reason_name(*reason),
-                key_exposure_name(reason.key_exposure())
-            ),
-        });
+fn migrate_human(
+    baseline: &TransactionWeight,
+    migration: &Migration,
+    parameter_set: ParameterSet,
+    fee_rate: Option<FeeRate>,
+) -> String {
+    let migrated = migration.migrated.as_ref();
+    // (rate, fee today, post-quantum fee if there's a migrated total).
+    let fees = fee_rate.map(|rate| {
+        (
+            rate,
+            fee(baseline.vsize, rate),
+            migrated.map(|total| fee(total.vsize, rate)),
+        )
+    });
+
+    let mut lines = vec![migrate_summary(baseline, migration, parameter_set, fees)];
+
+    // Today vs post-quantum; "-" where there's no migrated total.
+    let pq = |value: Option<u64>| value.map_or_else(|| "-".to_string(), grouped);
+    let mut rows = vec![
+        [
+            "weight (WU)".to_string(),
+            grouped(baseline.weight),
+            pq(migrated.map(|total| total.weight)),
+        ],
+        [
+            "vsize (vB)".to_string(),
+            grouped(baseline.vsize),
+            pq(migrated.map(|total| total.vsize)),
+        ],
+    ];
+    if let Some((rate, baseline_fee, pq_fee)) = fees {
+        rows.push([
+            format!("fee (sat, {rate} sat/vB)"),
+            grouped(baseline_fee),
+            pq(pq_fee),
+        ]);
     }
-    match &migration.migrated {
-        Some(total) => {
-            lines.push(format!("migrated weight: {}", total.weight));
-            lines.push(format!("migrated vsize: {}", total.vsize));
-            lines.push(format!(
-                "exceeds relay limit: {}",
-                if migration.exceeds_relay_limit == Some(true) {
-                    "yes"
-                } else {
-                    "no"
-                }
-            ));
-            if let Some(rate) = fee_rate {
-                let baseline_fee = fee(baseline_vsize, rate);
-                let pq_fee = fee(total.vsize, rate);
-                lines.push(format!("baseline fee: {baseline_fee} sat"));
-                lines.push(format!("pq fee: {pq_fee} sat"));
-                lines.push(format!(
-                    "fee difference: {} sat",
-                    pq_fee.abs_diff(baseline_fee)
-                ));
-                if baseline_fee > 0 {
-                    // Display only: fees this large (over 2^52 sats) never occur
-                    // in practice, so the precision loss doesn't affect the
-                    // ratio shown.
-                    #[allow(clippy::cast_precision_loss)]
-                    let ratio = pq_fee as f64 / baseline_fee as f64;
-                    lines.push(format!("fee ratio: {ratio:.2}"));
-                }
-            }
-        }
-        None => lines.push("migrated total: unavailable (not every input is mapped)".to_string()),
+    lines.push(String::new());
+    lines.extend(migrate_table(&rows));
+
+    lines.push(String::new());
+    lines.push("inputs".to_string());
+    lines.extend(migrate_input_lines(migration));
+
+    if let Some(exceeds) = migration.exceeds_relay_limit {
+        lines.push(String::new());
+        lines.push(format!(
+            "fits the {} WU relay limit: {}",
+            grouped(RELAY_WEIGHT_LIMIT),
+            if exceeds { "no" } else { "yes" }
+        ));
     }
-    lines.push("assumptions:".to_string());
+
+    lines.push(String::new());
+    lines.push("assumptions".to_string());
     for assumption in &migration.assumptions {
-        lines.push(format!("- {assumption}"));
+        lines.push(format!("  - {assumption}"));
     }
     lines.join("\n")
+}
+
+/// `migrate`'s first line: how many times heavier (and pricier, given a fee
+/// rate), or how many inputs are unmapped when there's no migrated total.
+fn migrate_summary(
+    baseline: &TransactionWeight,
+    migration: &Migration,
+    parameter_set: ParameterSet,
+    fees: Option<(FeeRate, u64, Option<u64>)>,
+) -> String {
+    let scheme = scheme_name(parameter_set);
+    let Some(total) = &migration.migrated else {
+        let unmapped = migration
+            .inputs
+            .iter()
+            .filter(|input| matches!(input, InputResult::Unmapped { .. }))
+            .count();
+        return format!(
+            "{scheme}: no post-quantum total, {unmapped} of {} inputs unmapped",
+            migration.inputs.len()
+        );
+    };
+    let mut summary = format!(
+        "{scheme}: {} the weight",
+        times(total.weight, baseline.weight)
+    );
+    if let Some((_, baseline_fee, Some(pq_fee))) = fees
+        && baseline_fee > 0
+    {
+        let _ = write!(summary, ", {} the fee", times(pq_fee, baseline_fee));
+    }
+    summary
+}
+
+/// `rows` of (label, today, post-quantum) under a header, numbers right-aligned.
+fn migrate_table(rows: &[[String; 3]]) -> Vec<String> {
+    let header = [
+        String::new(),
+        "today".to_string(),
+        "post-quantum".to_string(),
+    ];
+    let width = |column: usize| {
+        rows.iter()
+            .chain([&header])
+            .map(|row| row[column].len())
+            .max()
+            .unwrap_or(0)
+    };
+    let (label_width, today_width, pq_width) = (width(0), width(1), width(2));
+    [&header]
+        .into_iter()
+        .chain(rows)
+        .map(|[label, today, post_quantum]| {
+            format!("{label:label_width$}  {today:>today_width$}  {post_quantum:>pq_width$}")
+        })
+        .collect()
+}
+
+/// One line per input: what it is, its Input weight today -> migrated (or just
+/// today for an unmapped input), and its Key exposure.
+fn migrate_input_lines(migration: &Migration) -> Vec<String> {
+    let inputs: Vec<(String, String, KeyExposure)> = migration
+        .inputs
+        .iter()
+        .map(|input| match input {
+            InputResult::Mapped {
+                spend_type,
+                baseline_weight,
+                template_weight,
+            } => (
+                spend_type_label(*spend_type),
+                format!(
+                    "{} -> {} WU",
+                    grouped(*baseline_weight),
+                    grouped(*template_weight)
+                ),
+                spend_type.key_exposure(),
+            ),
+            InputResult::Unmapped {
+                reason,
+                baseline_weight,
+            } => (
+                format!("unmapped: {}", unmapped_reason_name(*reason)),
+                format!("{} WU", grouped(*baseline_weight)),
+                reason.key_exposure(),
+            ),
+        })
+        .collect();
+    let index_width = format!("#{}", inputs.len().saturating_sub(1)).len();
+    let kind_width = inputs.iter().map(|input| input.0.len()).max().unwrap_or(0);
+    let weight_width = inputs.iter().map(|input| input.1.len()).max().unwrap_or(0);
+    inputs
+        .iter()
+        .enumerate()
+        .map(|(i, (kind, weights, key_exposure))| {
+            format!(
+                "  {:index_width$}  {kind:kind_width$}  {weights:>weight_width$}  key: {}",
+                format!("#{i}"),
+                key_exposure_name(*key_exposure)
+            )
+        })
+        .collect()
+}
+
+/// `n` with a comma every three digits, such as `10,180`.
+fn grouped(n: u64) -> String {
+    let digits = n.to_string();
+    let mut out = String::new();
+    for (i, digit) in digits.chars().enumerate() {
+        if i > 0 && (digits.len() - i).is_multiple_of(3) {
+            out.push(',');
+        }
+        out.push(digit);
+    }
+    out
+}
+
+/// `part / whole` to one decimal place, rounded half up, such as `9.3x`.
+/// `whole` must not be zero.
+fn times(part: u64, whole: u64) -> String {
+    let tenths = (part * 10 + whole / 2) / whole;
+    format!("{}.{}x", tenths / 10, tenths % 10)
 }
 
 /// `migrate --json` for one transaction. `line`, when given, is its line number
@@ -965,7 +1095,26 @@ fn decode_hex(hex: &str) -> Result<Vec<u8>, String> {
 
 #[cfg(test)]
 mod tests {
-    use super::{limit_multiple, limit_multiple_label};
+    use super::{grouped, limit_multiple, limit_multiple_label, times};
+
+    #[test]
+    fn grouped_puts_a_comma_every_three_digits() {
+        assert_eq!(grouped(0), "0");
+        assert_eq!(grouped(999), "999");
+        assert_eq!(grouped(1_000), "1,000");
+        assert_eq!(grouped(10_180), "10,180");
+        assert_eq!(grouped(1_234_567), "1,234,567");
+    }
+
+    #[test]
+    fn times_rounds_half_up_to_one_place() {
+        // 4069 / 436 = 9.33.
+        assert_eq!(times(4069, 436), "9.3x");
+        assert_eq!(times(436, 436), "1.0x");
+        // 0.95 exactly rounds up; 0.949 down.
+        assert_eq!(times(95, 100), "1.0x");
+        assert_eq!(times(949, 1000), "0.9x");
+    }
 
     #[test]
     fn limit_multiple_is_the_exact_decimal_without_trailing_zeros() {

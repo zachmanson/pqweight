@@ -260,7 +260,7 @@ pub struct Migration {
 }
 
 /// Bitcoin Core's `MAX_STANDARD_TX_WEIGHT`: relay policy, not a consensus rule.
-const RELAY_WEIGHT_LIMIT: u64 = 400_000;
+pub const RELAY_WEIGHT_LIMIT: u64 = 400_000;
 
 /// Assumptions every migration makes, regardless of parameter set.
 const BASE_ASSUMPTIONS: [&str; 3] = [

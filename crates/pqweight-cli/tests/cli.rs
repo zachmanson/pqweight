@@ -134,9 +134,20 @@ fn migrate_command_prints_the_migrated_total_and_assumptions() {
     let text = stdout(&output);
     // Weights hand-derived the same way as
     // pqweight::tests::migrate::p2wpkh_input_is_migrated_to_an_ml_dsa_44_witness.
-    assert!(text.contains("migrated weight: 4069"), "{text}");
-    assert!(text.contains("migrated vsize: 1018"), "{text}");
-    assert!(text.to_lowercase().contains("assumptions"), "{text}");
+    // Columns: today, post-quantum.
+    assert_eq!(row_after(&text, "weight (WU)"), ["436", "4,069"], "{text}");
+    assert_eq!(row_after(&text, "vsize (vB)"), ["109", "1,018"], "{text}");
+    // 4069 / 436 = 9.33.
+    assert_eq!(
+        text.lines().next(),
+        Some("ml-dsa-44: 9.3x the weight"),
+        "{text}"
+    );
+    assert!(
+        text.contains("fits the 400,000 WU relay limit: yes"),
+        "{text}"
+    );
+    assert!(text.contains("assumptions"), "{text}");
 }
 
 #[test]
@@ -159,11 +170,17 @@ fn migrate_command_reports_fees_when_a_fee_rate_is_given() {
     let text = stdout(&output);
     // Baseline vsize is the fixture's oracle vsize (109); PQ vsize is 1018
     // (see the test above), both at 2 sat/vB.
-    assert!(
-        text.contains(&format!("baseline fee: {} sat", 2 * fx.vsize)),
+    assert_eq!(
+        row_after(&text, "fee (sat, 2 sat/vB)"),
+        [(2 * fx.vsize).to_string().as_str(), "2,036"],
         "{text}"
     );
-    assert!(text.contains("pq fee: 2036 sat"), "{text}");
+    // 2036 / 218 = 9.34.
+    assert_eq!(
+        text.lines().next(),
+        Some("ml-dsa-44: 9.3x the weight, 9.3x the fee"),
+        "{text}"
+    );
 }
 
 #[test]
@@ -229,10 +246,9 @@ fn migrate_command_names_a_multisig_input_with_its_threshold() {
     let text = stdout(&output);
     // Template weight hand-derived in pqweight::tests::migrate::
     // p2wsh_multisig_input_is_migrated_with_every_public_key_in_the_script.
-    assert!(
-        text.contains("input 0: mapped (P2WSH multisig 2-of-3), weight: 8963"),
-        "{text}"
-    );
+    let line = input_line(&text, 0);
+    assert!(line.contains("P2WSH multisig 2-of-3"), "{text}");
+    assert!(line.contains("-> 8,963 WU"), "{text}");
 }
 
 #[test]
@@ -382,10 +398,9 @@ fn migrate_command_names_a_p2tr_single_key_leaf_input_and_states_its_output_assu
     let text = stdout(&output);
     // Template weight hand-derived in pqweight::tests::migrate::
     // p2tr_single_key_leaf_is_migrated_with_the_pq_key_in_the_leaf_and_no_internal_key.
-    assert!(
-        text.contains("input 0: mapped (P2TR script-path single-key), weight: 3909"),
-        "{text}"
-    );
+    let line = input_line(&text, 0);
+    assert!(line.contains("P2TR script-path single-key"), "{text}");
+    assert!(line.contains("-> 3,909 WU"), "{text}");
     assert!(text.contains("Merkle root directly"), "{text}");
 }
 
@@ -399,14 +414,34 @@ fn migrate_command_names_the_unmapped_reason_of_an_unmapped_input() {
         None,
     );
 
+    let text = stdout(&human);
     assert!(
-        stdout(&human).contains("input 0: unmapped (P2TR key-path with annex)"),
-        "{}",
-        stdout(&human)
+        input_line(&text, 0).contains("unmapped: P2TR key-path with annex"),
+        "{text}"
+    );
+    // No migrated total, so nothing in the post-quantum column.
+    assert_eq!(row_after(&text, "weight (WU)")[1], "-", "{text}");
+    assert_eq!(
+        text.lines().next(),
+        Some("ml-dsa-44: no post-quantum total, 1 of 1 inputs unmapped"),
+        "{text}"
     );
     let parsed: serde_json::Value = serde_json::from_str(&stdout(&json)).unwrap();
     assert_eq!(parsed["inputs"][0]["status"], "unmapped");
     assert_eq!(parsed["inputs"][0]["reason"], "P2TR key-path with annex");
+}
+
+/// The line for input `i` in `migrate`'s human output.
+fn input_line(text: &str, i: usize) -> &str {
+    let label = format!("#{i} ");
+    text.lines()
+        .find(|line| line.trim_start().starts_with(&label))
+        .unwrap_or_else(|| {
+            panic!(
+                "no line for input {i} in:
+{text}"
+            )
+        })
 }
 
 /// The whitespace-separated columns after `label` on the line that starts with
@@ -513,17 +548,17 @@ fn aggregate_command_sorts_mapped_breakdown_rows_by_added_weight() {
 
 #[test]
 fn migrate_command_names_the_key_exposure_of_every_input() {
-    // (fixture, human input line, Key exposure). Weights and reasons as in the
-    // tests above.
+    // (fixture, text on its human input line, Key exposure). Weights and
+    // reasons as in the tests above.
     let cases = [
         (
             "p2wpkh",
-            "input 0: mapped (P2WPKH), weight: 3903, key exposure: Hashed until spend",
+            "P2WPKH  270 -> 3,903 WU  key: Hashed until spend",
             "Hashed until spend",
         ),
         (
             "p2tr-keypath-annex",
-            "input 0: unmapped (P2TR key-path with annex), key exposure: Exposed in output",
+            "key: Exposed in output",
             "Exposed in output",
         ),
     ];
@@ -536,7 +571,8 @@ fn migrate_command_names_the_key_exposure_of_every_input() {
             None,
         );
 
-        assert!(stdout(&human).contains(line), "{}", stdout(&human));
+        let text = stdout(&human);
+        assert!(input_line(&text, 0).contains(line), "{text}");
         let parsed: serde_json::Value = serde_json::from_str(&stdout(&json)).unwrap();
         assert_eq!(parsed["inputs"][0]["key_exposure"], key_exposure, "{name}");
     }

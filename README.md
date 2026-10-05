@@ -56,26 +56,36 @@ bitcoin-cli getrawtransaction <txid> | pqweight weight
 
 ```sh
 $ pqweight migrate --scheme ml-dsa-44 --fee-rate 10 02000000000101...
-input 0: mapped (P2WPKH), weight: 3903, key exposure: Hashed until spend
-migrated weight: 4069
-migrated vsize: 1018
-exceeds relay limit: no
-baseline fee: 1090 sat
-pq fee: 10180 sat
-fee difference: 9090 sat
-fee ratio: 9.34
-assumptions:
-- PQ outputs commit to a hash of the public key, as today's outputs do
-- the 520-byte stack element limit (witness items and pushes inside a script) and sigop accounting are changed by a soft fork
-- outputs are unchanged by migration
+ml-dsa-44: 9.3x the weight, 9.3x the fee
+
+                      today  post-quantum
+weight (WU)             436         4,069
+vsize (vB)              109         1,018
+fee (sat, 10 sat/vB)  1,090        10,180
+
+inputs
+  #0  P2WPKH  270 -> 3,903 WU  key: Hashed until spend
+
+fits the 400,000 WU relay limit: yes
+
+assumptions
+  - PQ outputs commit to a hash of the public key, as today's outputs do
+  - the 520-byte stack element limit (witness items and pushes inside a script) and sigop accounting are changed by a soft fork
+  - outputs are unchanged by migration
 ```
 
-Each input is either mapped to a template (with its migrated Input weight and Key exposure) or unmapped with the reason. A transaction only gets a migrated total when every input is mapped:
+Each input is either mapped to a template (its Input weight today -> migrated, and its Key exposure) or unmapped with the reason. A transaction only gets a migrated total when every input is mapped:
 
 ```sh
 $ pqweight migrate --scheme slh-dsa-128s <a P2PK spend>
-input 0: unmapped (P2PK), key exposure: Exposed in output
-migrated total: unavailable (not every input is mapped)
+slh-dsa-128s: no post-quantum total, 1 of 1 inputs unmapped
+
+             today  post-quantum
+weight (WU)  1,100             -
+vsize (vB)     275             -
+
+inputs
+  #0  unmapped: P2PK  452 WU  key: Exposed in output
 ...
 ```
 
