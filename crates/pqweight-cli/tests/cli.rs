@@ -312,6 +312,38 @@ fn migrate_command_rejects_a_bad_fee_rate() {
     assert!(stderr(&output).contains("fee"), "{}", stderr(&output));
 }
 
+#[test]
+fn stdin_starting_with_a_byte_order_mark_is_read_as_if_it_had_none() {
+    // Windows PowerShell 5.1 puts a UTF-8 BOM in front of whatever it pipes
+    // into a program (`Get-Content tx.hex | pqweight weight`).
+    let fx = p2wpkh_fixture();
+
+    let output = run(&["weight"], Some(&format!("\u{feff}{}\r\n", fx.hex)));
+
+    assert!(output.status.success(), "{}", stderr(&output));
+    let text = stdout(&output);
+    assert!(text.contains(&format!("weight: {}", fx.weight)), "{text}");
+}
+
+#[test]
+fn a_file_starting_with_a_byte_order_mark_is_read_as_if_it_had_none() {
+    // Notepad and PowerShell's Out-File can save UTF-8 with a BOM.
+    let fx = p2wpkh_fixture();
+    let path = scratch_file("bom");
+    std::fs::write(&path, format!("\u{feff}{}\r\n{}\r\n", fx.hex, fx.hex)).unwrap();
+
+    let output = run(
+        &["aggregate", "--scheme", "ml-dsa-44", path.to_str().unwrap()],
+        None,
+    );
+    std::fs::remove_file(&path).ok();
+
+    assert!(output.status.success(), "{}", stderr(&output));
+    let text = stdout(&output);
+    assert!(text.contains("transactions parsed: 2"), "{text}");
+    assert!(text.contains("parse errors: 0"), "{text}");
+}
+
 /// A path in the OS temp directory unique to this test process and name, so
 /// parallel test runs never collide.
 fn scratch_file(name: &str) -> std::path::PathBuf {

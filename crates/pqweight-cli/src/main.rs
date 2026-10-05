@@ -1045,9 +1045,9 @@ fn weight_json(weight: &TransactionWeight) -> String {
 /// is none. With `--json-lines` a lone argument is always read as the path.
 fn read_path_or_stdin(positional: &[&str]) -> Result<String, String> {
     match positional {
-        [path] => {
-            std::fs::read_to_string(path).map_err(|err| format!("could not read {path}: {err}"))
-        }
+        [path] => std::fs::read_to_string(path)
+            .map(without_bom)
+            .map_err(|err| format!("could not read {path}: {err}")),
         [] => read_stdin(),
         _ => Err(USAGE.to_string()),
     }
@@ -1076,7 +1076,17 @@ fn read_stdin() -> Result<String, String> {
     std::io::stdin()
         .read_to_string(&mut input)
         .map_err(|err| format!("could not read stdin: {err}"))?;
-    Ok(input)
+    Ok(without_bom(input))
+}
+
+/// `text` without a leading UTF-8 byte order mark. Windows PowerShell 5.1 adds
+/// one to everything it pipes into a program, and Notepad can save files with
+/// one.
+fn without_bom(text: String) -> String {
+    match text.strip_prefix('\u{feff}') {
+        Some(rest) => rest.to_string(),
+        None => text,
+    }
 }
 
 fn decode_hex(hex: &str) -> Result<Vec<u8>, String> {
