@@ -437,6 +437,33 @@ fn migrate_command_names_a_p2tr_single_key_leaf_input_and_states_its_output_assu
 }
 
 #[test]
+fn migrate_and_aggregate_explain_why_a_p2pk_spend_is_unmapped() {
+    let p2pk = fixture("p2pk");
+
+    let migrate = stdout(&run(&["migrate", "--scheme", "ml-dsa-44", &p2pk.hex], None));
+    let aggregate = stdout(&run(
+        &["aggregate", "--scheme", "ml-dsa-44"],
+        Some(&format!("{}\n", p2pk.hex)),
+    ));
+
+    for text in [migrate, aggregate] {
+        assert!(text.contains("\nnotes\n"), "{text}");
+        assert!(text.contains("  - P2PK is unmapped:"), "{text}");
+        assert!(text.contains("no hash to swap"), "{text}");
+        assert!(text.contains("pqweight move-cost"), "{text}");
+    }
+}
+
+#[test]
+fn migrate_prints_no_notes_when_nothing_needs_explaining() {
+    let fx = p2wpkh_fixture();
+
+    let text = stdout(&run(&["migrate", "--scheme", "ml-dsa-44", &fx.hex], None));
+
+    assert!(!text.contains("notes"), "{text}");
+}
+
+#[test]
 fn migrate_command_names_the_unmapped_reason_of_an_unmapped_input() {
     let fx = fixture("p2tr-keypath-annex");
 

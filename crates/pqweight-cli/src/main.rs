@@ -603,6 +603,12 @@ fn aggregate_human(result: &AggregateResult, blocks: bool) -> String {
     if blocks {
         lines.extend(blocks_table(&result.blocks));
     }
+    lines.extend(unmapped_notes(result.breakdown.iter().filter_map(
+        |row| match row.kind {
+            BreakdownKind::Unmapped(reason) => Some(reason),
+            BreakdownKind::Mapped(_) => None,
+        },
+    )));
     if !result.errors.is_empty() {
         lines.push("errors:".to_string());
         for error in &result.errors {
@@ -902,7 +908,51 @@ fn migrate_human(
     for assumption in &migration.assumptions {
         lines.push(format!("  - {assumption}"));
     }
+    lines.extend(unmapped_notes(migration.inputs.iter().filter_map(
+        |input| match input {
+            InputResult::Unmapped { reason, .. } => Some(*reason),
+            InputResult::Mapped { .. } => None,
+        },
+    )));
     lines.join("\n")
+}
+
+/// A `notes` section explaining each distinct Unmapped reason in `reasons`
+/// that has an explanation, or nothing when none do.
+fn unmapped_notes(reasons: impl Iterator<Item = UnmappedReason>) -> Vec<String> {
+    let mut seen = Vec::new();
+    for reason in reasons {
+        if !seen.contains(&reason) {
+            seen.push(reason);
+        }
+    }
+    let notes: Vec<String> = seen
+        .into_iter()
+        .filter_map(|reason| {
+            unmapped_note(reason)
+                .map(|note| format!("  - {} is unmapped: {note}", unmapped_reason_name(reason)))
+        })
+        .collect();
+    if notes.is_empty() {
+        return notes;
+    }
+    let mut lines = vec![String::new(), "notes".to_string()];
+    lines.extend(notes);
+    lines
+}
+
+/// Why an Unmapped reason has no template, for the reasons a reader is likely
+/// to ask about.
+fn unmapped_note(reason: UnmappedReason) -> Option<&'static str> {
+    match reason {
+        UnmappedReason::P2pk => Some(
+            "the output holds the raw ECDSA public key, so there's no hash to swap for a PQ key. \
+             Before a soft fork disables ECDSA the spend is unchanged (nothing added); after it, \
+             the coin can't be spent without a rescue mechanism nobody has specified. \
+             `pqweight move-cost` measures moving these coins to PQ outputs first.",
+        ),
+        _ => None,
+    }
 }
 
 /// `migrate`'s first line: how many times heavier (and pricier, given a fee

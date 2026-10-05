@@ -89,6 +89,8 @@ inputs
 ...
 ```
 
+When an Unmapped reason has a known explanation (so far only P2PK, whose output holds the raw key so there is no hash to swap), `migrate` and `aggregate` include a `notes` section saying why.
+
 `--json` returns the same thing as one object, plus each input's Input weight today (`baseline_weight`) and the transaction's weight today (`baseline`), with a `fee` field when `--fee-rate` is given:
 
 ```sh
