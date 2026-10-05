@@ -16,7 +16,7 @@ Or run it without installing: `cargo run -p pqweight-cli -- <command> ...`
 
 ## Usage
 
-There are four commands. The first three take raw transactions as hex, either as an argument or on stdin; `move-cost` reads a UTXO snapshot file.
+There are five commands. `weight`, `migrate` and `aggregate` take raw transactions as hex, either as an argument or on stdin (`aggregate --blocks` takes raw blocks instead); `split-blocks` takes raw blocks; `move-cost` reads a UTXO snapshot file.
 
 ```
 pqweight weight [--json] [<hex>]
@@ -196,7 +196,14 @@ cargo clippy --workspace --all-targets -- -D warnings
 cargo fmt --all --check
 ```
 
-CI runs the same three on every push and PR.
+CI runs the same three on every push and PR, then the **Second calculation**:
+
+```sh
+cargo build -p pqweight-cli
+python scripts/second-calculation.py target/debug/pqweight --fixtures crates/pqweight/tests/fixtures
+```
+
+It rebuilds every mapped input's migrated bytes from [docs/migration-templates.md](docs/migration-templates.md) alone (not from the Rust) and checks pqweight's migrated weights on every Fixture at all three parameter sets. Agreement means the code matches the stated templates, not that the templates are right. Stdlib-only Python 3.
 
 Weight tests run against **fixtures** in `crates/pqweight/tests/fixtures/`: signed transactions (mostly built on a throwaway regtest node, a few taken from mainnet) with the `weight` and `vsize` Bitcoin Core reported for them. Fixtures are committed, so CI never needs a node. To re-record them you need a local Bitcoin Core; see `scripts/record-fixtures.ps1`. The snapshot Fixture (`tests/fixtures/snapshot/`, a regtest UTXO snapshot with `gettxout` for every coin) is recorded by `scripts/record-snapshot-fixture.ps1`.
 
